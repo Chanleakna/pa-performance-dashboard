@@ -1,19 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
-  buildASMRollups,
-  buildPASummaries,
-  overallAttainment,
-  salesForAsm,
+  attainmentOverMonths,
+  leadsForPa,
+  leadsForPaMonth,
   salesForPa,
+  tarLeadForPaMonth,
 } from "../lib/model";
+import { type MonthKey } from "../lib/parse";
 import { fmtInt, fmtPct, fmtCompact } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { DataStatus, LoadingState } from "../components/DataStatus";
-import { AttainmentPill, StatCard } from "../components/ui";
-import { HorizontalLabeledBar } from "../components/charts";
+import { AttainmentPill } from "../components/ui";
+import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import { useDebounced } from "../lib/hooks";
 
 function ExportButton({
@@ -56,37 +57,147 @@ function PanelHead({
   );
 }
 
-type PaSort = "sales" | "leads" | "nuTotal" | "attainment" | "name";
+interface OvRow {
+  name: string;
+  asm: string;
+  leads: number;
+  nu: number;
+  attainment: number | null;
+  sales: number;
+}
+
+function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+  return (
+    <div className="rounded-lg bg-brand-600 p-2.5 text-white">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-brand-100">
+        {label}
+      </div>
+      <div className="text-lg font-bold tabular-nums leading-tight">{value}</div>
+      {sub && <div className="text-[10px] text-brand-100">{sub}</div>}
+    </div>
+  );
+}
+
+type PaSort = "sales" | "leads" | "nu" | "attainment" | "name";
 
 export function OverviewView() {
   const data = useDashboardData();
   const { model } = data;
+  const [slicer, setSlicer] = useState<SlicerState>({
+    years: [],
+    months: [],
+    asms: [],
+    pas: [],
+  });
+  const [defaulted, setDefaulted] = useState(false);
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<PaSort>("sales");
   const [asc, setAsc] = useState(false);
   const q = useDebounced(query, 250).toLowerCase();
 
+  const allMonths = useMemo<MonthKey[]>(() => {
+    if (!model) return [];
+    return Array.from(new Set([...model.dailyMonths, ...model.targetMonths])).sort();
+  }, [model]);
+  const years = useMemo(() => {
+    const ys = new Set<string>();
+    for (const m of allMonths) ys.add(m.slice(0, 4));
+    return Array.from(ys).sort();
+  }, [allMonths]);
+
+  // Default the slicers to the latest year + month once data first loads.
+  useEffect(() => {
+    if (!model || defaulted || !model.dailyMonths.length) return;
+    const latest = model.dailyMonths[model.dailyMonths.length - 1];
+    setSlicer((s) => ({ ...s, years: [latest.slice(0, 4)], months: [latest] }));
+    setDefaulted(true);
+  }, [model, defaulted]);
+
+  const monthScope = useMemo<MonthKey[] | null>(() => {
+    if (slicer.months.length) return slicer.months;
+    if (slicer.years.length)
+      return allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")));
+    return null;
+  }, [slicer.months, slicer.years, allMonths]);
+
+  const pasForAsmsFn = useMemo(() => {
+    return (asms: string[]) => {
+      if (!model) return [];
+      const list = asms.length
+        ? model.pas.filter((p) => asms.includes(p.asm))
+        : model.pas;
+      return list.map((p) => p.name);
+    };
+  }, [model]);
+
+  // Per-PA rows, scoped by the slicers. Leads/NU/attainment respect the month
+  // scope; actual sales are cumulative (no month dimension in the sales tab).
+  const rows = useMemo<OvRow[]>(() => {
+    if (!model) return [];
+    const scopePas = model.pas.filter((p) => {
+      if (slicer.pas.length) return slicer.pas.includes(p.name);
+      if (slicer.asms.length) return slicer.asms.includes(p.asm);
+      return true;
+    });
+    const attMonths = (monthScope ?? model.attainmentMonths).filter((m) =>
+      model.attainmentMonths.includes(m)
+    );
+    return scopePas.map((p) => {
+      const leads = monthScope
+        ? monthScope.reduce((s, m) => s + leadsForPaMonth(model, p.name, m), 0)
+        : leadsForPa(model, p.name);
+      const nu = (model.nuByPa[p.name] || []).filter(
+        (r) => !monthScope || monthScope.includes(r.month)
+      ).length;
+      return {
+        name: p.name,
+        asm: p.asm,
+        leads,
+        nu,
+        attainment: attainmentOverMonths(model, p.name, attMonths),
+        sales: salesForPa(model, p.name),
+      };
+    });
+  }, [model, slicer.pas, slicer.asms, monthScope]);
+
+  // Team Leader aggregation from the scoped rows.
   const asmRows = useMemo(() => {
     if (!model) return [];
-    return buildASMRollups(model)
-      .map((r) => ({ ...r, sales: salesForAsm(model, r.asm) }))
-      .sort((a, b) => b.sales - a.sales);
-  }, [model]);
-
-  const paRows = useMemo(() => {
-    if (!model) return [];
-    return buildPASummaries(model).map((s) => ({
-      ...s,
-      sales: salesForPa(model, s.name),
-    }));
-  }, [model]);
+    const map = new Map<string, OvRow[]>();
+    for (const r of rows) {
+      if (!map.has(r.asm)) map.set(r.asm, []);
+      map.get(r.asm)!.push(r);
+    }
+    const attMonths = (monthScope ?? model.attainmentMonths).filter((m) =>
+      model.attainmentMonths.includes(m)
+    );
+    return Array.from(map.entries())
+      .map(([asm, teamPas]) => {
+        let a = 0;
+        let t = 0;
+        for (const p of teamPas)
+          for (const m of attMonths) {
+            const tt = tarLeadForPaMonth(model, p.name, m);
+            if (tt > 0) {
+              t += tt;
+              a += leadsForPaMonth(model, p.name, m);
+            }
+          }
+        return {
+          asm,
+          paCount: teamPas.length,
+          leads: teamPas.reduce((s, p) => s + p.leads, 0),
+          nu: teamPas.reduce((s, p) => s + p.nu, 0),
+          sales: teamPas.reduce((s, p) => s + p.sales, 0),
+          attainment: t > 0 ? (a / t) * 100 : null,
+        };
+      })
+      .sort((x, y) => y.sales - x.sales);
+  }, [model, rows, monthScope]);
 
   const sortedPas = useMemo(() => {
-    const filtered = paRows.filter(
-      (p) =>
-        !q ||
-        p.name.toLowerCase().includes(q) ||
-        p.asm.toLowerCase().includes(q)
+    const filtered = rows.filter(
+      (p) => !q || p.name.toLowerCase().includes(q) || p.asm.toLowerCase().includes(q)
     );
     const dir = asc ? 1 : -1;
     return [...filtered].sort((a, b) => {
@@ -95,12 +206,21 @@ export function OverviewView() {
       const bv = (b[sortKey] as number | null) ?? -1;
       return (av - bv) * dir;
     });
-  }, [paRows, q, sortKey, asc]);
+  }, [rows, q, sortKey, asc]);
+
+  // Heatmap rows (PA | Act.Sale | Act.Lead), sorted by sales.
+  const heatRows = useMemo(() => {
+    const r = [...rows].sort((a, b) => b.sales - a.sales).slice(0, 150);
+    const maxSales = r.reduce((m, x) => Math.max(m, x.sales), 1);
+    const maxLeads = r.reduce((m, x) => Math.max(m, x.leads), 1);
+    return { r, maxSales, maxLeads };
+  }, [rows]);
 
   if (!model) return <LoadingState />;
 
-  const overall = overallAttainment(model, model.attainmentMonths);
-  const salesChart = asmRows.map((r) => ({ asm: r.asm, sales: r.sales }));
+  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
+  const totalLeads = rows.reduce((s, r) => s + r.leads, 0);
+  const totalNu = rows.reduce((s, r) => s + r.nu, 0);
 
   const setSort = (k: PaSort) => {
     if (k === sortKey) setAsc((v) => !v);
@@ -122,65 +242,124 @@ export function OverviewView() {
     </th>
   );
 
+  const teal = (v: number, max: number) => {
+    const i = v <= 0 ? 0 : 0.12 + 0.7 * (v / max);
+    return {
+      backgroundColor: v <= 0 ? "#f8fafc" : `rgba(13, 148, 136, ${i})`,
+      color: i > 0.5 ? "#fff" : "#134e4a",
+    };
+  };
+  const blue = (v: number, max: number) => {
+    const i = v <= 0 ? 0 : 0.12 + 0.7 * (v / max);
+    return {
+      backgroundColor: v <= 0 ? "#f8fafc" : `rgba(37, 99, 235, ${i})`,
+      color: i > 0.5 ? "#fff" : "#1e3a8a",
+    };
+  };
+
   return (
     <div>
       <DataStatus data={data} />
 
+      <CascadingSlicers
+        state={slicer}
+        onChange={setSlicer}
+        years={years}
+        months={allMonths}
+        asms={model.asms}
+        pasForAsms={pasForAsmsFn}
+      />
+
       {/* KPI strip */}
       <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <StatCard
-          label="Actual Sales"
-          value={fmtCompact(model.salesTotal)}
-          sub="from Daily Sales"
-          accent="teal"
-        />
-        <StatCard label="Total Leads" value={fmtInt(model.daily.length)} />
-        <StatCard label="New Users" value={fmtInt(model.nu.length)} accent="indigo" />
-        <StatCard
-          label="Attainment"
-          value={overall == null ? "n/a" : fmtPct(overall)}
-          sub="target months"
-          accent="slate"
-        />
+        <KpiTile label="Actual Sales" value={fmtCompact(totalSales)} sub="cumulative" />
+        <KpiTile label="Leads" value={fmtInt(totalLeads)} />
+        <KpiTile label="New Users" value={fmtInt(totalNu)} />
+        <KpiTile label="PAs" value={fmtInt(rows.length)} />
       </div>
 
       {model.salesTotal === 0 && (
         <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-          No actual sales matched yet. Check that the Daily Sales{" "}
-          <span className="font-medium">export</span> tab is published as CSV and
-          that the correct tab gid is set — see the Sales diagnostics below.
+          No actual sales matched. Check the Daily Sales{" "}
+          <span className="font-medium">export</span> tab is Published to web as
+          CSV — see the Sales diagnostics at the bottom.
         </div>
       )}
 
-      {/* Actual Sales by Team Leader */}
+      {/* PA | Act.Sale | Act.Lead heatmap */}
       <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
         <PanelHead
-          title="Actual Sales by Team Leader"
-          hint="joined Code → Customer Code"
-          exportName="sales-by-patl"
+          title="PA · Actual Sales · Actual Lead"
+          hint="heatmap"
+          exportName="pa-sales-leads"
           exportRows={() =>
-            asmRows.map((r) => ({
-              "Team Leader": r.asm,
-              "Actual Sales": Math.round(r.sales),
-              Leads: r.leads,
-              "New Users": r.nuTotal,
-              "Attainment %": r.attainment == null ? "" : Math.round(r.attainment),
+            heatRows.r.map((p) => ({
+              PA: p.name,
+              "Team Leader": p.asm,
+              "Actual Sales": Math.round(p.sales),
+              "Actual Lead": p.leads,
             }))
           }
         />
-        <HorizontalLabeledBar
-          data={salesChart}
-          dataKey="sales"
-          yKey="asm"
-          color="#0d9488"
-          height={Math.max(160, salesChart.length * 44)}
-          valueFormatter={(v) => fmtCompact(v)}
-        />
+        <div className="no-scrollbar overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-slate-400">
+                <th className="sticky left-0 z-10 bg-white px-1.5 py-1 text-left font-medium">
+                  PA Name
+                </th>
+                <th className="px-1.5 py-1 text-right font-medium">Act. Sale</th>
+                <th className="px-1.5 py-1 text-right font-medium">Act. Lead</th>
+              </tr>
+            </thead>
+            <tbody>
+              {heatRows.r.map((p) => (
+                <tr key={p.name}>
+                  <td
+                    className="sticky left-0 z-10 max-w-[150px] truncate bg-white px-1.5 py-1 text-slate-700"
+                    title={`${p.name} · ${p.asm}`}
+                  >
+                    {p.name}
+                  </td>
+                  <td
+                    className="rounded px-1.5 py-1 text-right tabular-nums"
+                    style={teal(p.sales, heatRows.maxSales)}
+                  >
+                    {fmtInt(p.sales)}
+                  </td>
+                  <td
+                    className="rounded px-1.5 py-1 text-right tabular-nums"
+                    style={blue(p.leads, heatRows.maxLeads)}
+                  >
+                    {fmtInt(p.leads)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">
+          Teal = actual sales (cumulative), blue = actual leads (in the selected
+          months). Top 150 PAs by sales.
+        </p>
       </div>
 
-      {/* Team Leader rollup table */}
+      {/* Team Leader summary */}
       <div className="mt-3 overflow-x-auto rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
-        <PanelHead title="Team Leader summary" />
+        <PanelHead
+          title="Team Leader summary"
+          exportName="overview-by-patl"
+          exportRows={() =>
+            asmRows.map((r) => ({
+              "Team Leader": r.asm,
+              PAs: r.paCount,
+              Leads: r.leads,
+              "New Users": r.nu,
+              "Attainment %": r.attainment == null ? "" : Math.round(r.attainment),
+              "Actual Sales": Math.round(r.sales),
+            }))
+          }
+        />
         <table className="w-full text-sm">
           <thead className="border-b border-slate-100 text-xs">
             <tr>
@@ -198,7 +377,7 @@ export function OverviewView() {
                 <td className="px-2 py-2 font-medium text-slate-800">{r.asm}</td>
                 <td className="px-2 py-2 text-right tabular-nums text-slate-500">{r.paCount}</td>
                 <td className="px-2 py-2 text-right tabular-nums">{fmtInt(r.leads)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">{fmtInt(r.nuTotal)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{fmtInt(r.nu)}</td>
                 <td className="px-2 py-2 text-right"><AttainmentPill pct={r.attainment} /></td>
                 <td className="px-2 py-2 text-right font-semibold tabular-nums text-teal-700">
                   {fmtInt(r.sales)}
@@ -219,7 +398,7 @@ export function OverviewView() {
               PA: p.name,
               "Team Leader": p.asm,
               Leads: p.leads,
-              "New Users": p.nuTotal,
+              "New Users": p.nu,
               "Attainment %": p.attainment == null ? "" : Math.round(p.attainment),
               "Actual Sales": Math.round(p.sales),
             }))
@@ -239,7 +418,7 @@ export function OverviewView() {
                 <Th k="name" label="PA" />
                 <th className="px-2 py-2 text-left font-medium text-slate-500">Team Leader</th>
                 <Th k="leads" label="Leads" right />
-                <Th k="nuTotal" label="NU" right />
+                <Th k="nu" label="NU" right />
                 <Th k="attainment" label="Attain." right />
                 <Th k="sales" label="Actual Sales" right />
               </tr>
@@ -250,7 +429,7 @@ export function OverviewView() {
                   <td className="px-2 py-2 font-medium text-slate-800">{p.name}</td>
                   <td className="px-2 py-2 text-slate-500">{p.asm}</td>
                   <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.leads)}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.nuTotal)}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{fmtInt(p.nu)}</td>
                   <td className="px-2 py-2 text-right"><AttainmentPill pct={p.attainment} /></td>
                   <td className="px-2 py-2 text-right font-semibold tabular-nums text-teal-700">
                     {fmtInt(p.sales)}
@@ -301,12 +480,6 @@ export function OverviewView() {
           </div>
         </div>
       </details>
-
-      <p className="mt-3 text-[11px] text-slate-400">
-        Actual sales come from the Daily Sales workbook&rsquo;s export tab, summed
-        per Customer Code and joined to each outlet&rsquo;s Code on the Target tab.
-        Only PAs under a Team Leader are shown.
-      </p>
     </div>
   );
 }
