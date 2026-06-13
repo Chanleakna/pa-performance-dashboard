@@ -174,6 +174,15 @@ function computeHeatmapData(
     }
     inner.set(k, (inner.get(k) || 0) + 1);
   }
+  // Seed every PA in scope so zero-lead PAs still show (as all-red rows).
+  for (const p of model.pas) {
+    if (scopeFilter.pas && scopeFilter.pas.length) {
+      if (!scopeFilter.pas.includes(p.name)) continue;
+    } else if (scopeFilter.asms && scopeFilter.asms.length) {
+      if (!scopeFilter.asms.includes(p.asm)) continue;
+    }
+    if (!byPa.has(p.name)) byPa.set(p.name, new Map());
+  }
 
   const rows: HeatRow[] = Array.from(byPa.entries())
     .map(([pa, m]) => {
@@ -185,7 +194,7 @@ function computeHeatmapData(
       return { pa, m, actual, target, dailyTarget: DAILY_TARGET, pct };
     })
     .sort((a, b) => b.actual - a.actual)
-    .slice(0, 30);
+    .slice(0, 150);
 
   const max = rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1);
   return { cols, rows, max };
