@@ -7,6 +7,7 @@ import {
   filteredNU,
   leadsForPaMonth,
   tarLeadForPaMonth,
+  targetLeadForPaMonth,
   tarLeadForScopeMonth,
   type DashboardModel,
   type Filter,
@@ -218,7 +219,8 @@ function AttainmentHeatmap({
     const rows = pas
       .map((p) => {
         const cells = months.map((m) => {
-          const t = tarLeadForPaMonth(model, p.name, m);
+          // Use Tar.Lead, or Quali.Lead where Tar.Lead is absent (March).
+          const t = targetLeadForPaMonth(model, p.name, m);
           const a = leadsForPaMonth(model, p.name, m);
           return { t, a, pct: t > 0 ? (a / t) * 100 : null };
         });
@@ -320,10 +322,10 @@ function AttainmentHeatmap({
       <p className="mt-2 text-[11px] text-slate-400">
         Each cell shows <span className="font-medium">attainment %</span> with{" "}
         <span className="font-medium">Actual / Target</span> beneath (daily Actual ÷
-        Tar.Lead). <span className="font-medium text-emerald-700">Green</span> = at
-        or above target (≥100%); <span className="font-medium text-red-700">red</span>{" "}
-        = below. Top row is all PAs combined; months without a Tar.Lead show
-        &ldquo;—&rdquo;.
+        target). <span className="font-medium text-emerald-700">Green</span> = at or
+        above target (≥100%); <span className="font-medium text-red-700">red</span> =
+        below. All target months are shown (Year/PATL/PA still filter); March uses
+        its Quali.Lead as target. Top row is all PAs combined.
       </p>
     </div>
   );
@@ -394,15 +396,16 @@ export function BiReportView() {
     });
   }, [model, slicer.pas, slicer.asms]);
 
-  // Target months to show as columns (target tab months, scoped by Year/Month).
+  // Target months to show as columns. Always show ALL target months (scoped by
+  // Year only) so the attainment matrix shows the full year — the Month slicer
+  // does NOT collapse it, mirroring the Monthly Lead vs Target chart.
   const targetTableMonths = useMemo<MonthKey[]>(() => {
     if (!model) return [];
     let ms = model.targetMonths;
-    if (slicer.months.length) ms = ms.filter((m) => slicer.months.includes(m));
-    else if (slicer.years.length)
+    if (slicer.years.length)
       ms = ms.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")));
     return ms;
-  }, [model, slicer.months, slicer.years]);
+  }, [model, slicer.years]);
 
   // PA options cascade from the selected PATLs (union; [] => every PA).
   const pasForAsmsFn = useMemo(() => {
@@ -599,7 +602,7 @@ export function BiReportView() {
 
       <Panel
         title="Attainment % by PA"
-        hint="green = achieved · red = below target"
+        hint="all months · green = achieved · red = below"
         className="mt-3"
       >
         <AttainmentHeatmap model={model} pas={scopePas} months={targetTableMonths} />

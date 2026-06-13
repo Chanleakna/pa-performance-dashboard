@@ -310,6 +310,32 @@ export function tarLeadForPaMonth(
   return found ? t : 0;
 }
 
+/**
+ * Target leads for a PA/month using Tar.Lead, falling back to Quali.Lead when
+ * Tar.Lead is absent (e.g. March, which the sheet labels Quali.Lead). Used by
+ * the Attainment % by PA view so every month with any target shows.
+ */
+export function targetLeadForPaMonth(
+  model: DashboardModel,
+  paName: string,
+  month: MonthKey
+): number {
+  const key = normName(paName);
+  let t = 0;
+  let found = false;
+  for (const r of model.target.rows) {
+    if (normName(r.paName) !== key) continue;
+    const cell = r.months[month];
+    if (!cell) continue;
+    const v = cell.tarLead ?? cell.qualiLead;
+    if (v != null) {
+      t += v;
+      found = true;
+    }
+  }
+  return found ? t : 0;
+}
+
 /** Attainment % for a PA/month, or null if no target (e.g. March). */
 export function attainmentPct(
   model: DashboardModel,
