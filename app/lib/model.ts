@@ -61,6 +61,9 @@ export interface DashboardModel {
   leadByPaMonth: Map<string, Map<MonthKey, number>>;
   leadTotalByPa: Map<string, number>;
 
+  /** normName(pa) -> distinct store/outlet names (from the Target tab). */
+  storesByPa: Map<string, string[]>;
+
   // ---- actual sales (2nd sheet) joined on Code -> Customer Code ----
   sales: SalesParseResult;
   salesByPa: Map<string, number>; // normName(pa) -> total actual sales
@@ -135,6 +138,16 @@ export function buildModel(
   const pas = Array.from(paMap.values()).sort((a, b) =>
     a.name.localeCompare(b.name)
   );
+
+  // PA -> distinct store (outlet) names, from the Target tab.
+  const storesByPa = new Map<string, string[]>();
+  for (const r of target.rows) {
+    if (!r.paName || !r.outlet) continue;
+    const k = normName(r.paName);
+    const arr = storesByPa.get(k) || [];
+    if (!arr.includes(r.outlet)) arr.push(r.outlet);
+    storesByPa.set(k, arr);
+  }
 
   // ---- month sets ----
   const dailyMonths = sortedMonths(new Set(daily.map((d) => d.month)));
@@ -271,6 +284,7 @@ export function buildModel(
     nuByPa,
     leadByPaMonth,
     leadTotalByPa,
+    storesByPa,
     sales,
     salesByPa,
     salesByAsm,
@@ -283,6 +297,11 @@ export function buildModel(
     salesTargetTotal,
     salesTargetMatchRate,
   };
+}
+
+/** Comma-joined store/outlet names for a PA (empty string if none). */
+export function storesForPa(model: DashboardModel, paName: string): string {
+  return (model.storesByPa.get(normName(paName)) || []).join(", ");
 }
 
 /** Total sales target for a PA (via its outlet Code), optionally month-scoped. */

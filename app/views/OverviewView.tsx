@@ -382,13 +382,13 @@ export function OverviewView() {
             })
           }
         />
-        <div className="no-scrollbar overflow-x-auto">
+        <div className="no-scrollbar max-h-[75vh] overflow-auto">
           <table className="border-separate border-spacing-0 text-[10px]">
             <thead>
               <tr>
                 <th
                   rowSpan={2}
-                  className="sticky left-0 z-10 border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500"
+                  className="sticky left-0 top-0 z-40 border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500"
                 >
                   # · PA · Store
                 </th>
@@ -396,7 +396,7 @@ export function OverviewView() {
                   <th
                     key={m}
                     colSpan={2}
-                    className="border-b border-l border-slate-200 px-1 py-1 text-center font-semibold text-slate-600"
+                    className="sticky top-0 z-20 border-b border-l border-slate-200 bg-white px-1 py-1 text-center font-semibold text-slate-600"
                   >
                     {monthLabel(m).replace(" 20", " '")}
                   </th>
@@ -405,10 +405,10 @@ export function OverviewView() {
               <tr>
                 {matrixMonths.map((m) => (
                   <Fragment key={m}>
-                    <th className="border-b border-l border-slate-200 px-1 py-0.5 text-center font-medium text-brand-600">
+                    <th className="sticky top-[25px] z-20 border-b border-l border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-brand-600">
                       Lead
                     </th>
-                    <th className="border-b border-slate-200 px-1 py-0.5 text-center font-medium text-teal-700">
+                    <th className="sticky top-[25px] z-20 border-b border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-teal-700">
                       Sales
                     </th>
                   </Fragment>

@@ -10,6 +10,7 @@ import {
   targetLeadForPaMonth,
   tarLeadForScopeMonth,
   sumTargetField,
+  storesForPa,
   type DashboardModel,
   type Filter,
 } from "../lib/model";
@@ -186,30 +187,35 @@ function HeatMap({
     return <p className="py-6 text-center text-xs text-slate-400">No leads in scope.</p>;
 
   return (
-    <div className="no-scrollbar overflow-x-auto">
+    <div className="no-scrollbar max-h-[70vh] overflow-auto">
       <table className="border-separate border-spacing-0.5 text-[10px]">
         <thead>
           <tr>
-            <th className="sticky left-0 z-10 bg-white pr-2 text-left font-medium text-slate-400">
-              PA
+            <th className="sticky left-0 top-0 z-30 bg-white pr-2 text-left font-medium text-slate-400">
+              # · PA · Store
             </th>
             {cols.map((c) => (
-              <th key={c.key} className="px-0.5 font-medium text-slate-400">
+              <th key={c.key} className="sticky top-0 z-20 bg-white px-0.5 font-medium text-slate-400">
                 {c.label}
               </th>
             ))}
-            <th className="px-1 text-right font-semibold text-slate-500">Act</th>
-            <th className="px-1 text-right font-semibold text-slate-500">Day&nbsp;Tgt</th>
-            <th className="px-1 text-right font-semibold text-slate-500">%</th>
+            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Act</th>
+            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Day&nbsp;Tgt</th>
+            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">%</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => {
+          {rows.map((r, ri) => {
             const dt = r.dailyTarget;
             return (
             <tr key={r.pa}>
-              <td className="sticky left-0 z-10 max-w-[110px] truncate bg-white pr-2 text-slate-600">
-                {r.pa}
+              <td className="sticky left-0 z-10 max-w-[150px] truncate bg-white pr-2">
+                <div className="text-slate-700">
+                  <span className="text-slate-400">#{ri + 1}</span> {r.pa}
+                </div>
+                <div className="truncate text-[9px] text-slate-400">
+                  {storesForPa(model, r.pa) || "—"}
+                </div>
               </td>
               {cols.map((c) => {
                 const v = r.m.get(c.key) || 0;
@@ -416,8 +422,8 @@ function AttainmentHeatmap({
     );
 
   const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
-  const nameCell =
-    "sticky left-0 z-10 max-w-[120px] truncate bg-white px-1.5 py-1 text-left";
+  const nameBody =
+    "sticky left-0 z-10 max-w-[150px] truncate bg-white px-1.5 py-1 text-left";
   // Each cell shows attainment %, with Actual/Target absolute numbers beneath.
   const cellBody = (pct: number | null, a: number, t: number) =>
     t > 0 ? (
@@ -432,23 +438,27 @@ function AttainmentHeatmap({
     );
 
   return (
-    <div className="no-scrollbar overflow-x-auto">
+    <div className="no-scrollbar max-h-[70vh] overflow-auto">
       <table className="border-separate border-spacing-0.5 text-[11px]">
         <thead>
           <tr className="text-slate-400">
-            <th className={nameCell + " font-medium"}>PA</th>
+            <th className="sticky left-0 top-0 z-30 bg-white px-1.5 py-1 text-left font-medium">
+              # · PA · Store
+            </th>
             {months.map((m) => (
-              <th key={m} className={cellCls + " font-medium"}>
+              <th key={m} className={cellCls + " sticky top-0 z-20 bg-white font-medium"}>
                 {monthLabel(m).replace(" 20", " '")}
               </th>
             ))}
-            <th className={cellCls + " font-semibold text-slate-500"}>Total</th>
+            <th className={cellCls + " sticky top-0 z-20 bg-white font-semibold text-slate-500"}>
+              Total
+            </th>
           </tr>
         </thead>
         <tbody>
           {/* Accumulated attainment of all PAs together. */}
           <tr className="font-semibold">
-            <td className={nameCell + " text-amber-800"}>Total (all PAs)</td>
+            <td className={nameBody + " text-amber-800"}>Total (all PAs)</td>
             {totalsByMonth.map((t, i) => (
               <td key={i} className={cellCls} style={attainStyle(t.pct)}>
                 {cellBody(t.pct, t.a, t.t)}
@@ -458,10 +468,15 @@ function AttainmentHeatmap({
               {cellBody(grand.pct, grand.a, grand.t)}
             </td>
           </tr>
-          {rows.map((r) => (
+          {rows.map((r, ri) => (
             <tr key={r.name}>
-              <td className={nameCell + " text-slate-700"} title={`${r.name} · ${r.asm}`}>
-                {r.name}
+              <td className={nameBody} title={`${r.name} · ${r.asm} · ${storesForPa(model, r.name)}`}>
+                <div className="text-slate-700">
+                  <span className="text-slate-400">#{ri + 1}</span> {r.name}
+                </div>
+                <div className="truncate text-[9px] text-slate-400">
+                  {storesForPa(model, r.name) || "—"}
+                </div>
               </td>
               {r.cells.map((c, i) => (
                 <td key={i} className={cellCls} style={attainStyle(c.pct)}>
@@ -625,8 +640,10 @@ export function BiReportView() {
     return monthsToShow
       .map((m) => ({
         label: monthLabel(m).replace(" 20", " '"),
+        // Both Target (Tar.Lead) and Actual (Act.Lead) come from the
+        // "Target & Actual of Lead & NU" tab — apples to apples.
         Target: tarLeadForScopeMonth(model, scopeOnly, m),
-        Actual: filteredDaily(model, { ...scopeOnly, monthKeys: [m] }).length,
+        Actual: sumTargetField(model, scopeOnly, m, "actLead"),
       }))
       .filter((r) => r.Actual > 0 || r.Target > 0);
   }, [model, scopeOnly, slicer.years, allMonths]);
@@ -759,7 +776,7 @@ export function BiReportView() {
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Panel
           title="Monthly Lead vs Target"
-          hint="all months · Tar.Lead only"
+          hint="from Target & Actual tab (Tar.Lead vs Act.Lead)"
           exportName="lead-vs-target"
           exportRows={() =>
             leadVsTarget.map((r) => ({
