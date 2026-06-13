@@ -645,6 +645,85 @@ export function BiReportView() {
         lead views but has no Tar.Lead. NU joins to PAs via Contact ID
         (~{fmtPct(model.nuMatchRate * 100)} matched; the rest are Unassigned).
       </p>
+
+      <Diagnostics model={model} />
     </div>
+  );
+}
+
+/** Collapsible parse diagnostics — helps pinpoint data/publish issues. */
+function Diagnostics({ model }: { model: DashboardModel }) {
+  const d = model.target.debug;
+  const line = "flex justify-between gap-3 border-b border-slate-100 py-0.5";
+  return (
+    <details className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-[11px] text-slate-600">
+      <summary className="cursor-pointer font-semibold text-slate-700">
+        Diagnostics (parse health)
+      </summary>
+      <div className="mt-2 space-y-0.5">
+        <div className={line}>
+          <span>Daily lead rows</span>
+          <span className="tabular-nums">{model.daily.length}</span>
+        </div>
+        <div className={line}>
+          <span>Target rows</span>
+          <span className="tabular-nums">{model.target.rows.length}</span>
+        </div>
+        <div className={line}>
+          <span>NU rows</span>
+          <span className="tabular-nums">{model.nu.length}</span>
+        </div>
+        <div className={line}>
+          <span>Training rows</span>
+          <span className="tabular-nums">{model.training.length}</span>
+        </div>
+        <div className={line}>
+          <span>Target months detected</span>
+          <span className="text-right">
+            {model.targetMonths.join(", ") || "(none)"}
+          </span>
+        </div>
+        <div className={line}>
+          <span>Attainment months</span>
+          <span className="text-right">
+            {model.attainmentMonths.join(", ") || "(none)"}
+          </span>
+        </div>
+        {d && (
+          <>
+            <div className={line}>
+              <span>CSV rows / month-row idx / month-start col</span>
+              <span className="tabular-nums">
+                {d.totalCsvRows} / {d.monthRowIdx} / {d.monthStart}
+              </span>
+            </div>
+            <div className={line}>
+              <span>Mapped cols / of which Tar.Lead</span>
+              <span className="tabular-nums">
+                {d.mappedCols} / {d.tarLeadCols}
+              </span>
+            </div>
+            <div className="pt-1">
+              <div className="font-medium text-slate-500">Detected month row:</div>
+              <div className="break-all font-mono text-[10px]">
+                [{d.headerMonthsSample.map((c) => `"${c}"`).join(", ")}]
+              </div>
+            </div>
+            <div className="pt-1">
+              <div className="font-medium text-slate-500">Detected sub-header row:</div>
+              <div className="break-all font-mono text-[10px]">
+                [{d.headerSubsSample.map((c) => `"${c}"`).join(", ")}]
+              </div>
+            </div>
+            <div className="pt-1">
+              <div className="font-medium text-slate-500">First data row:</div>
+              <div className="break-all font-mono text-[10px]">
+                [{d.sampleDataRow.map((c) => `"${c}"`).join(", ")}]
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </details>
   );
 }

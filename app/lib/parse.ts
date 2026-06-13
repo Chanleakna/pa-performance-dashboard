@@ -232,6 +232,17 @@ export interface TargetParseResult {
   paToAsm: Record<string, string>;
   /** Distinct ASMs, sorted. */
   asms: string[];
+  /** Diagnostics for remote debugging of the wide-header parse. */
+  debug?: {
+    totalCsvRows: number;
+    monthRowIdx: number;
+    monthStart: number;
+    headerMonthsSample: string[];
+    headerSubsSample: string[];
+    sampleDataRow: string[];
+    mappedCols: number;
+    tarLeadCols: number;
+  };
 }
 
 export function parseTargetActual(csv: string): TargetParseResult {
@@ -343,6 +354,16 @@ export function parseTargetActual(csv: string): TargetParseResult {
     months: monthOrder,
     paToAsm,
     asms: Array.from(asmSet).sort((a, b) => a.localeCompare(b)),
+    debug: {
+      totalCsvRows: rows2d.length,
+      monthRowIdx,
+      monthStart,
+      headerMonthsSample: headerMonths.slice(0, 18).map((c) => String(c ?? "")),
+      headerSubsSample: headerSubs.slice(0, 18).map((c) => String(c ?? "")),
+      sampleDataRow: (bodyRows[0] ?? []).slice(0, 18).map((c) => String(c ?? "")),
+      mappedCols: colMaps.length,
+      tarLeadCols: colMaps.filter((c) => c.field === "tarLead").length,
+    },
   };
 }
 
