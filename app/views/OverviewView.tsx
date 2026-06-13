@@ -97,7 +97,9 @@ export function OverviewView() {
 
   const allMonths = useMemo<MonthKey[]>(() => {
     if (!model) return [];
-    return Array.from(new Set([...model.dailyMonths, ...model.targetMonths])).sort();
+    return Array.from(
+      new Set([...model.dailyMonths, ...model.targetMonths, ...model.sales.months])
+    ).sort();
   }, [model]);
   const years = useMemo(() => {
     const ys = new Set<string>();
@@ -155,7 +157,7 @@ export function OverviewView() {
         leads,
         nu,
         attainment: attainmentOverMonths(model, p.name, attMonths),
-        sales: salesForPa(model, p.name),
+        sales: salesForPa(model, p.name, monthScope),
       };
     });
   }, [model, slicer.pas, slicer.asms, monthScope]);
@@ -272,7 +274,11 @@ export function OverviewView() {
 
       {/* KPI strip */}
       <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <KpiTile label="Actual Sales" value={fmtCompact(totalSales)} sub="cumulative" />
+        <KpiTile
+          label="Actual Sales"
+          value={fmtCompact(totalSales)}
+          sub={monthScope ? "selected months" : "all months"}
+        />
         <KpiTile label="Leads" value={fmtInt(totalLeads)} />
         <KpiTile label="New Users" value={fmtInt(totalNu)} />
         <KpiTile label="PAs" value={fmtInt(rows.length)} />
@@ -339,8 +345,8 @@ export function OverviewView() {
           </table>
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
-          Teal = actual sales (cumulative), blue = actual leads (in the selected
-          months). Top 150 PAs by sales.
+          Teal = actual sales, blue = actual leads — both for the selected
+          Year/Month (and PATL/PA). Top 150 PAs by sales.
         </p>
       </div>
 
@@ -459,10 +465,23 @@ export function OverviewView() {
             </span>
           </div>
           <div className="flex justify-between border-b border-slate-100 py-0.5">
-            <span>Code column / Sales column</span>
+            <span>Code col / Sales col</span>
             <span className="text-right">
               {model.sales.debug?.codeHeader || "(none)"} /{" "}
               {model.sales.debug?.salesHeader || "(none)"}
+            </span>
+          </div>
+          <div className="flex justify-between border-b border-slate-100 py-0.5">
+            <span>Year col / Month col</span>
+            <span className="text-right">
+              {model.sales.debug?.yearHeader || "(none)"} /{" "}
+              {model.sales.debug?.monthHeader || "(none)"}
+            </span>
+          </div>
+          <div className="flex justify-between border-b border-slate-100 py-0.5">
+            <span>Sales months detected</span>
+            <span className="text-right">
+              {model.sales.months.join(", ") || "(none)"}
             </span>
           </div>
           <div className="flex justify-between border-b border-slate-100 py-0.5">

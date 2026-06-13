@@ -573,14 +573,20 @@ export function parseTraining(csv: string): TrainingRow[] {
 // ----------------------------------------------------------------------------
 
 export interface SalesParseResult {
-  /** normalized customer code -> total actual sales */
+  /** normalized customer code -> total actual sales (all months) */
   byCode: Record<string, number>;
+  /** normalized customer code -> { monthKey -> actual sales } */
+  byCodeMonth: Record<string, Record<MonthKey, number>>;
   total: number;
+  /** distinct month keys present in the sales data, sorted */
+  months: MonthKey[];
   debug?: {
     rows: number;
     headers: string[];
     codeHeader: string;
     salesHeader: string;
+    yearHeader: string;
+    monthHeader: string;
     distinctCodes: number;
   };
 }
@@ -596,28 +602,52 @@ export function parseSales(csv: string): SalesParseResult {
     skipEmptyLines: "greedy",
   });
   const headers = (meta.fields || []).map((h) => String(h));
-
-  // Find the customer-code and total-actual-sales columns flexibly.
-  const findHeader = (...tests: ((h: string) => boolean)[]): string => {
-    for (const test of tests) {
-      const hit = headers.find((h) => test(h.toLowerCase()));
+  const lc = (h: string) => h.toLowerCase();
+  const find = (...tests: ((h: string) => boolean)[]): string => {
+    for (const t of tests) {
+      const hit = headers.find((h) => t(lc(h)));
       if (hit) return hit;
     }
     return "";
   };
-  const codeHeader = findHeader(
-    (h) => h.includes("customer") && h.includes("code"),
-    (h) => h.includes("outlet") && h.includes("code"),
-    (h) => h.includes("code")
+
+  // Customer code — must NOT match "Material Code". Note the header may read
+  // "Customer Cod" (truncated), so match "cod" rather than the full "code".
+  const codeHeader = find(
+    (h) => h.includes("customer") && h.includes("cod"),
+    (h) => h.includes("outlet") && h.includes("cod"),
+    (h) => h === "code" || h.includes("customer code")
   );
-  const salesHeader = findHeader(
-    (h) => h.includes("total") && h.includes("actual") && h.includes("sale"),
+  const salesHeader = find(
     (h) => h.includes("total") && h.includes("sale"),
-    (h) => h.includes("actual") && h.includes("sale"),
+    (h) => h.includes("act") && h.includes("sale"),
     (h) => h.includes("sale")
   );
+  const yearHeader = find((h) => h.includes("year"));
+
+  // Month column: its values are month names ("May", "January", …). Detect by
+  // sampling, ignoring the year/code/sales columns. (Header is "Short Cut".)
+  let monthHeader = "";
+  {
+    let best = 0;
+    for (const h of headers) {
+      if (h === yearHeader || h === codeHeader || h === salesHeader) continue;
+      let c = 0;
+      const n = Math.min(40, data.length);
+      for (let i = 0; i < n; i++) {
+        const v = String(data[i]?.[h] ?? "").trim().toLowerCase();
+        if (v && MONTH_ABBR.some((mn) => v.startsWith(mn))) c++;
+      }
+      if (c > best) {
+        best = c;
+        monthHeader = h;
+      }
+    }
+  }
 
   const byCode: Record<string, number> = {};
+  const byCodeMonth: Record<string, Record<MonthKey, number>> = {};
+  const monthsSet = new Set<MonthKey>();
   let total = 0;
   for (const row of data) {
     if (!row || typeof row !== "object") continue;
@@ -626,16 +656,29 @@ export function parseSales(csv: string): SalesParseResult {
     if (!code || val == null) continue;
     byCode[code] = (byCode[code] || 0) + val;
     total += val;
+
+    if (monthHeader) {
+      const yr = yearHeader ? String(row[yearHeader] ?? "").trim() : "";
+      const mk = monthKeyFromHeaderCell(`${row[monthHeader]} ${yr}`.trim());
+      if (mk) {
+        (byCodeMonth[code] ||= {})[mk] = (byCodeMonth[code][mk] || 0) + val;
+        monthsSet.add(mk);
+      }
+    }
   }
 
   return {
     byCode,
+    byCodeMonth,
     total,
+    months: Array.from(monthsSet).sort(),
     debug: {
       rows: data.length,
       headers,
       codeHeader,
       salesHeader,
+      yearHeader,
+      monthHeader,
       distinctCodes: Object.keys(byCode).length,
     },
   };

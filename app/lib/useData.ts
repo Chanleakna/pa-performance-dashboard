@@ -68,7 +68,9 @@ export function useDashboardData(): UseDataResult {
           : { rows: [], months: [], paToAsm: {}, asms: [] },
         nu.data ? parseFinalNU(nu.data) : [],
         training.data ? parseTraining(training.data) : [],
-        sales.data ? parseSales(sales.data) : { byCode: {}, total: 0 }
+        sales.data
+          ? parseSales(sales.data)
+          : { byCode: {}, byCodeMonth: {}, total: 0, months: [] }
       );
     } catch (e) {
       // A parse failure shouldn't blank the whole page; surface via errors.

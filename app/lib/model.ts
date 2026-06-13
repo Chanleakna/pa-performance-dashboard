@@ -64,6 +64,7 @@ export interface DashboardModel {
   sales: SalesParseResult;
   salesByPa: Map<string, number>; // normName(pa) -> total actual sales
   salesByAsm: Map<string, number>; // asm -> total actual sales
+  salesByPaMonth: Map<string, Map<MonthKey, number>>; // pa -> month -> sales
   salesTotal: number; // total sales attributed to a PATL-classified PA
   salesMatchRate: number; // attributed ÷ all sales (0–1)
 }
@@ -192,15 +193,29 @@ export function buildModel(
   // ---- actual sales join: Target tab `Code` -> sales `Customer Code` ----
   const salesByPa = new Map<string, number>();
   const salesByAsm = new Map<string, number>();
+  const salesByPaMonth = new Map<string, Map<MonthKey, number>>();
   let salesTotal = 0;
   for (const r of target.rows) {
     if (!r.code) continue;
-    const amt = sales.byCode[normCode(r.code)];
+    const code = normCode(r.code);
+    const amt = sales.byCode[code];
     if (!amt) continue;
     const paKey = normName(r.paName);
     salesByPa.set(paKey, (salesByPa.get(paKey) || 0) + amt);
     salesByAsm.set(r.asm, (salesByAsm.get(r.asm) || 0) + amt);
     salesTotal += amt;
+
+    const perMonth = sales.byCodeMonth[code];
+    if (perMonth) {
+      let inner = salesByPaMonth.get(paKey);
+      if (!inner) {
+        inner = new Map();
+        salesByPaMonth.set(paKey, inner);
+      }
+      for (const [mk, v] of Object.entries(perMonth)) {
+        inner.set(mk, (inner.get(mk) || 0) + v);
+      }
+    }
   }
   const salesMatchRate = sales.total ? salesTotal / sales.total : 0;
 
@@ -222,19 +237,28 @@ export function buildModel(
     sales,
     salesByPa,
     salesByAsm,
+    salesByPaMonth,
     salesTotal,
     salesMatchRate,
   };
 }
 
-/** Total actual sales attributed to a PA (via its outlet Code). */
-export function salesForPa(model: DashboardModel, paName: string): number {
-  return model.salesByPa.get(normName(paName)) || 0;
-}
-
-/** Total actual sales attributed to an ASM (Team Leader). */
-export function salesForAsm(model: DashboardModel, asm: string): number {
-  return model.salesByAsm.get(asm) || 0;
+/**
+ * Total actual sales attributed to a PA (via its outlet Code). If `monthScope`
+ * is given, only sales in those months are summed; otherwise all months.
+ */
+export function salesForPa(
+  model: DashboardModel,
+  paName: string,
+  monthScope?: MonthKey[] | null
+): number {
+  const key = normName(paName);
+  if (!monthScope) return model.salesByPa.get(key) || 0;
+  const inner = model.salesByPaMonth.get(key);
+  if (!inner) return 0;
+  let s = 0;
+  for (const m of monthScope) s += inner.get(m) || 0;
+  return s;
 }
 
 // ----------------------------------------------------------------------------
