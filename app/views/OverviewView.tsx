@@ -507,8 +507,9 @@ export function OverviewView() {
           Tar.Lead) and <span className="font-medium text-teal-700">Sales</span>{" "}
           (actual / target) as Act/Tar with a % (
           <span className="font-medium text-emerald-700">green</span> ≥100%,{" "}
-          <span className="font-medium text-red-700">red</span> below). Sales
-          target is shown ex-VAT (−10%) to match actuals. Ranked by total Act.Lead.
+          <span className="font-medium text-red-700">red</span> below). Actual
+          sales are ×1.1 (with VAT) to match the VAT-inclusive target. Ranked by
+          total Act.Lead.
         </p>
       </div>
 

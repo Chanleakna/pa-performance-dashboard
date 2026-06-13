@@ -652,8 +652,10 @@ export function parseSales(csv: string): SalesParseResult {
   for (const row of data) {
     if (!row || typeof row !== "object") continue;
     const code = normCode(row[codeHeader]);
-    const val = num(row[salesHeader]);
-    if (!code || val == null) continue;
+    const raw = num(row[salesHeader]);
+    if (!code || raw == null) continue;
+    // Actual sales are ex-VAT; gross up by 10% to match the VAT-inclusive target.
+    const val = raw * 1.1;
     byCode[code] = (byCode[code] || 0) + val;
     total += val;
 
@@ -754,10 +756,6 @@ export function parseSalesTarget(csv: string): SalesTargetParseResult {
     if (mk) monthCols.push({ col: c, mk });
   }
 
-  // The sales target is VAT-inclusive (10%); show it ex-VAT so it compares
-  // apples-to-apples with actual sales (which are ex-VAT).
-  const EX_VAT = 0.9;
-
   const byCodeMonth: Record<string, Record<MonthKey, number>> = {};
   const byCode: Record<string, number> = {};
   const monthsSet = new Set<MonthKey>();
@@ -766,9 +764,8 @@ export function parseSalesTarget(csv: string): SalesTargetParseResult {
     const code = normCode(r[codeCol]);
     if (!code) continue;
     for (const mc of monthCols) {
-      const raw = num(r[mc.col]);
-      if (raw == null) continue;
-      const v = raw * EX_VAT;
+      const v = num(r[mc.col]);
+      if (v == null) continue;
       (byCodeMonth[code] ||= {})[mc.mk] = (byCodeMonth[code][mc.mk] || 0) + v;
       byCode[code] = (byCode[code] || 0) + v;
       total += v;
