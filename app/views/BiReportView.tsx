@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
   filteredDaily,
@@ -376,6 +376,15 @@ export function BiReportView() {
     pas: [],
   });
 
+  // Default the slicers to the latest year + month once data first loads.
+  const [defaulted, setDefaulted] = useState(false);
+  useEffect(() => {
+    if (!model || defaulted || !model.dailyMonths.length) return;
+    const latest = model.dailyMonths[model.dailyMonths.length - 1];
+    setSlicer((s) => ({ ...s, years: [latest.slice(0, 4)], months: [latest] }));
+    setDefaulted(true);
+  }, [model, defaulted]);
+
   // Year and full-month-key lists for the slicers.
   const allMonths = useMemo<MonthKey[]>(() => {
     if (!model) return [];
@@ -737,9 +746,9 @@ export function BiReportView() {
       </div>
 
       <p className="mt-4 text-[11px] text-slate-400">
-        Attainment uses target months only (Jan/Feb/Apr 2026); March shows in
-        lead views but has no Tar.Lead. NU joins to PAs via Contact ID
-        (~{fmtPct(model.nuMatchRate * 100)} matched; the rest are Unassigned).
+        Showing only PAs under a Team Leader (PATL) — unclassified PAs, their
+        leads, and unmatched NU are excluded. NU joins to PAs via Contact ID
+        (~{fmtPct(model.nuMatchRate * 100)} of NU matched to a PATL&rsquo;s PA).
       </p>
 
       <Diagnostics model={model} />

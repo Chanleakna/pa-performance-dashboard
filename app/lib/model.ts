@@ -74,6 +74,18 @@ export function buildModel(
 ): DashboardModel {
   const paToAsm = target.paToAsm;
 
+  // --- Drop everything not under a PATL (Team Leader), until further notice. ---
+  // A PA is "classified" only if it maps to a real (non-Unassigned) ASM.
+  const isClassified = (paName: string): boolean => {
+    const a = paToAsm[normName(paName)];
+    return !!a && a !== UNASSIGNED;
+  };
+  // Keep only target rows that have a real Team Leader…
+  const targetRows = target.rows.filter((r) => r.asm && r.asm !== UNASSIGNED);
+  target = { ...target, rows: targetRows };
+  // …and only daily leads whose PA is under a Team Leader.
+  daily = daily.filter((d) => isClassified(d.paName));
+
   // ---- PA roster: target PAs first, then any daily-only PAs ----
   const paMap = new Map<string, PAInfo>();
   for (const r of target.rows) {
@@ -139,16 +151,15 @@ export function buildModel(
     if (r.outlet && !nameToPa.has(normName(r.outlet)))
       nameToPa.set(normName(r.outlet), r.paName || r.outlet);
   }
-  const nuByPa: Record<string, NURecord[]> = { [UNASSIGNED]: [] };
+  const nuByPa: Record<string, NURecord[]> = {};
   let matched = 0;
   for (const rec of nu) {
     const hit = nameToPa.get(normName(rec.contactId));
     if (hit) {
       matched++;
       (nuByPa[hit] ||= []).push(rec);
-    } else {
-      nuByPa[UNASSIGNED].push(rec);
     }
+    // Unmatched NU (no PATL-classified PA) is dropped until further notice.
   }
   const nuMatchRate = nu.length ? matched / nu.length : 0;
 
