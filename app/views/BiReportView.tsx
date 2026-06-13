@@ -62,6 +62,9 @@ function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode;
 
 // ---- heatmap -----------------------------------------------------------------
 
+// Working days per month used to derive the daily-lead target benchmark.
+const WORKING_DAYS = 24;
+
 function HeatMap({
   model,
   filter,
@@ -104,7 +107,9 @@ function HeatMap({
         let target = 0;
         for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
         const pct = target > 0 ? (actual / target) * 100 : null;
-        return { pa, m, actual, target, pct };
+        // Daily benchmark = monthly target spread over the working days.
+        const dailyTarget = target / WORKING_DAYS;
+        return { pa, m, actual, target, dailyTarget, pct };
       })
       .sort((a, b) => b.actual - a.actual)
       .slice(0, 30);
@@ -134,30 +139,44 @@ function HeatMap({
               </th>
             ))}
             <th className="px-1 text-right font-semibold text-slate-500">Act</th>
-            <th className="px-1 text-right font-semibold text-slate-500">Tar</th>
+            <th className="px-1 text-right font-semibold text-slate-500">Day&nbsp;Tgt</th>
             <th className="px-1 text-right font-semibold text-slate-500">%</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.map((r) => {
+            const dt = r.dailyTarget;
+            return (
             <tr key={r.pa}>
               <td className="sticky left-0 z-10 max-w-[110px] truncate bg-white pr-2 text-slate-600">
                 {r.pa}
               </td>
               {cols.map((c) => {
                 const v = r.m.get(c.key) || 0;
-                // Light-red scale, capped so the busiest days stay light red
-                // (not near-black) and the numbers remain readable.
-                const intensity = v === 0 ? 0 : 0.12 + 0.6 * (v / max);
+                // Benchmark each day against the daily target (monthly ÷ 24):
+                // green = met the daily target, red = below it, blank = no work.
+                let bg = "#f8fafc";
+                let color = "#94a3b8";
+                if (v > 0) {
+                  if (dt > 0 && v >= dt) {
+                    const i = Math.min(v / dt - 1, 1);
+                    bg = `rgba(22, 163, 74, ${0.3 + 0.45 * i})`;
+                    color = i > 0.4 ? "#fff" : "#14532d";
+                  } else if (dt > 0) {
+                    const i = 1 - v / dt;
+                    bg = `rgba(239, 68, 68, ${0.25 + 0.5 * i})`;
+                    color = i > 0.55 ? "#fff" : "#7f1d1d";
+                  } else {
+                    bg = `rgba(148, 163, 184, ${0.15 + 0.5 * (v / max)})`;
+                    color = "#334155";
+                  }
+                }
                 return (
                   <td
                     key={c.key}
-                    title={`${r.pa} · ${c.label}: ${v}`}
+                    title={`${r.pa} · day ${c.label}: ${v} vs daily target ${dt.toFixed(1)}`}
                     className="h-5 w-5 min-w-[20px] rounded text-center text-[9px]"
-                    style={{
-                      backgroundColor: v === 0 ? "#f8fafc" : `rgba(248, 113, 113, ${intensity})`,
-                      color: "#7f1d1d",
-                    }}
+                    style={{ backgroundColor: bg, color }}
                   >
                     {v || ""}
                   </td>
@@ -167,20 +186,24 @@ function HeatMap({
                 {fmtInt(r.actual)}
               </td>
               <td className="px-1 text-right tabular-nums text-slate-500">
-                {r.target > 0 ? fmtInt(r.target) : "—"}
+                {r.target > 0 ? dt.toFixed(1) : "—"}
               </td>
               <td className="px-1 text-right">
                 <AttainmentPill pct={r.pct} />
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Columns = day of month (1, 2, 3 …). Cells = daily lead count. Act / Tar /
-        % roll up over the selected scope using only{" "}
-        <span className="font-medium">Tar.Lead</span> (apple-to-apple). Months
-        without a Tar.Lead (e.g. March) show no %.
+        Columns = day of month. Each day cell is benchmarked against the{" "}
+        <span className="font-medium">daily target</span> = monthly Tar.Lead ÷{" "}
+        {WORKING_DAYS} working days:{" "}
+        <span className="font-medium text-emerald-700">green</span> = met that
+        day, <span className="font-medium text-red-700">red</span> = below.
+        Act = total actual, Day&nbsp;Tgt = daily target, % = actual ÷ monthly
+        target.
       </p>
     </div>
   );
@@ -717,7 +740,7 @@ export function BiReportView() {
 
       <Panel
         title="PA × Day Heatmap"
-        hint="by day · leads + Actual/Target/% · top 30 PAs"
+        hint="green/red vs daily target (target ÷ 24) · top 30 PAs"
         className="mt-3"
       >
         <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
