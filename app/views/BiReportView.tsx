@@ -790,6 +790,223 @@ function AttainmentByPatl({
   );
 }
 
+// ---- % NU / Lead strike rate by PATL → PA (monthly heatmap) -----------------
+
+/** Teal intensity scaled to the highest strike rate in view. */
+function strikeStyle(pct: number | null, maxPct: number): React.CSSProperties {
+  if (pct == null) return { backgroundColor: "#f1f5f9", color: "#94a3b8" };
+  const i = maxPct > 0 ? Math.min(pct / maxPct, 1) : 0;
+  return {
+    backgroundColor: `rgba(13, 148, 136, ${0.12 + 0.78 * i})`,
+    color: i > 0.5 ? "#fff" : "#134e4a",
+  };
+}
+function strikeCell(pct: number | null, nu: number, lead: number) {
+  return lead > 0 ? (
+    <div className="leading-tight">
+      <div className="font-semibold">{Math.round(pct as number)}%</div>
+      <div className="text-[9px] opacity-80">
+        {nu}/{lead}
+      </div>
+    </div>
+  ) : (
+    "—"
+  );
+}
+
+function StrikeRateByPatl({
+  model,
+  teams,
+  months,
+}: {
+  model: DashboardModel;
+  teams: [string, { name: string; asm: string }[]][];
+  months: MonthKey[];
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<AttSort>("total");
+  const [asc, setAsc] = useState(false);
+
+  const teamRows = useMemo(() => {
+    const nuCountFor = (paName: string, m: MonthKey) => {
+      let c = 0;
+      for (const r of model.nuByPa[paName] || []) if (r.month === m) c++;
+      return c;
+    };
+    return teams.map(([asm, pas]) => {
+      const paRows = pas.map((p) => {
+        const cells = months.map((m) => {
+          const nu = nuCountFor(p.name, m);
+          const lead = actLeadForPaMonth(model, p.name, m);
+          return { nu, lead, pct: lead > 0 ? (nu / lead) * 100 : null };
+        });
+        let N = 0;
+        let L = 0;
+        for (const c of cells) {
+          N += c.nu;
+          L += c.lead;
+        }
+        return {
+          name: p.name,
+          cells,
+          total: { nu: N, lead: L, pct: L > 0 ? (N / L) * 100 : null },
+        };
+      });
+      const monthCells = months.map((_, i) => {
+        let nu = 0;
+        let lead = 0;
+        for (const pr of paRows) {
+          nu += pr.cells[i].nu;
+          lead += pr.cells[i].lead;
+        }
+        return { nu, lead, pct: lead > 0 ? (nu / lead) * 100 : null };
+      });
+      let N = 0;
+      let L = 0;
+      for (const c of monthCells) {
+        N += c.nu;
+        L += c.lead;
+      }
+      return {
+        asm,
+        paRows,
+        paCount: pas.length,
+        monthCells,
+        total: { nu: N, lead: L, pct: L > 0 ? (N / L) * 100 : null },
+      };
+    });
+  }, [model, teams, months]);
+
+  const maxPct = useMemo(() => {
+    let mx = 0;
+    for (const tr of teamRows) {
+      for (const c of tr.monthCells) if (c.pct != null) mx = Math.max(mx, c.pct);
+      for (const pr of tr.paRows)
+        for (const c of pr.cells) if (c.pct != null) mx = Math.max(mx, c.pct);
+    }
+    return mx || 100;
+  }, [teamRows]);
+
+  const sorted = useMemo(() => {
+    const dir = asc ? 1 : -1;
+    return [...teamRows].sort((a, b) => {
+      if (sortKey === "name") return a.asm.localeCompare(b.asm) * dir;
+      const av = sortKey === "total" ? a.total.pct : a.monthCells[sortKey].pct;
+      const bv = sortKey === "total" ? b.total.pct : b.monthCells[sortKey].pct;
+      return (nullable(av) - nullable(bv)) * dir;
+    });
+  }, [teamRows, sortKey, asc]);
+
+  if (months.length === 0)
+    return (
+      <p className="py-6 text-center text-xs text-slate-400">No months in scope.</p>
+    );
+
+  const setSort = (k: AttSort) => {
+    if (k === sortKey) setAsc((v) => !v);
+    else {
+      setSortKey(k);
+      setAsc(k === "name");
+    }
+  };
+  const toggle = (asm: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(asm) ? n.delete(asm) : n.add(asm);
+      return n;
+    });
+  const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
+  const headCls =
+    cellCls + " sticky top-0 z-20 cursor-pointer select-none bg-white font-medium hover:text-brand-700";
+  const nameBody = "sticky left-0 z-10 max-w-[170px] truncate bg-white px-1.5 py-1 text-left";
+
+  return (
+    <div className="no-scrollbar max-h-[70vh] overflow-auto">
+      <table className="border-separate border-spacing-0.5 text-[11px]">
+        <thead>
+          <tr className="text-slate-400">
+            <th
+              onClick={() => setSort("name")}
+              className="sticky left-0 top-0 z-30 cursor-pointer select-none bg-white px-1.5 py-1 text-left font-medium hover:text-brand-700"
+            >
+              Team Leader
+              <SortCaret active={sortKey === "name"} asc={asc} />
+            </th>
+            {months.map((m, i) => (
+              <th key={m} onClick={() => setSort(i)} className={headCls}>
+                {monthLabel(m).replace(" 20", " '")}
+                <SortCaret active={sortKey === i} asc={asc} />
+              </th>
+            ))}
+            <th
+              onClick={() => setSort("total")}
+              className={headCls + " font-semibold text-slate-500"}
+            >
+              Total
+              <SortCaret active={sortKey === "total"} asc={asc} />
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((tr) => (
+            <Fragment key={tr.asm}>
+              <tr
+                className="cursor-pointer font-semibold hover:bg-slate-50"
+                onClick={() => toggle(tr.asm)}
+              >
+                <td className={nameBody + " text-slate-800"}>
+                  <span className="mr-1 text-slate-400">
+                    {expanded.has(tr.asm) ? "▼" : "▶"}
+                  </span>
+                  {tr.asm}{" "}
+                  <span className="text-[9px] font-normal text-slate-400">
+                    ({tr.paCount})
+                  </span>
+                </td>
+                {tr.monthCells.map((c, i) => (
+                  <td key={i} className={cellCls} style={strikeStyle(c.pct, maxPct)}>
+                    {strikeCell(c.pct, c.nu, c.lead)}
+                  </td>
+                ))}
+                <td className={cellCls} style={strikeStyle(tr.total.pct, maxPct)}>
+                  {strikeCell(tr.total.pct, tr.total.nu, tr.total.lead)}
+                </td>
+              </tr>
+              {expanded.has(tr.asm) &&
+                tr.paRows.map((pr) => (
+                  <tr key={tr.asm + "/" + pr.name}>
+                    <td
+                      className={nameBody + " bg-slate-50"}
+                      title={`${pr.name} · ${storesForPa(model, pr.name)}`}
+                    >
+                      <div className="pl-4 text-slate-700">{pr.name}</div>
+                      <div className="truncate pl-4 text-[9px] text-slate-400">
+                        {storesForPa(model, pr.name) || "—"}
+                      </div>
+                    </td>
+                    {pr.cells.map((c, i) => (
+                      <td key={i} className={cellCls} style={strikeStyle(c.pct, maxPct)}>
+                        {strikeCell(c.pct, c.nu, c.lead)}
+                      </td>
+                    ))}
+                    <td className={cellCls + " font-medium"} style={strikeStyle(pr.total.pct, maxPct)}>
+                      {strikeCell(pr.total.pct, pr.total.nu, pr.total.lead)}
+                    </td>
+                  </tr>
+                ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[11px] text-slate-400">
+        Strike rate = New Users ÷ Act.Lead per month (cell shows % with NU/Lead
+        beneath); darker teal = higher. Tap a Team Leader to expand its PAs; tap a
+        column header to sort.
+      </p>
+    </div>
+  );
+}
+
 // ---- main view ---------------------------------------------------------------
 
 export function BiReportView() {
@@ -1188,6 +1405,30 @@ export function BiReportView() {
           color="#6366f1"
           valueFormatter={(v) => `${v}%`}
         />
+      </Panel>
+
+      <Panel
+        title="% NU / Lead strike rate by PATL → PA"
+        hint="monthly · tap a team leader to expand its PAs · sortable"
+        className="mt-3"
+        exportName="nu-per-lead-by-patl"
+        exportRows={() =>
+          patlTeams.map(([asm, teamPas]) => {
+            const out: Record<string, unknown> = { "Team Leader": asm, PAs: teamPas.length };
+            targetTableMonths.forEach((m) => {
+              let nu = 0;
+              let lead = 0;
+              for (const p of teamPas) {
+                for (const r of model.nuByPa[p.name] || []) if (r.month === m) nu++;
+                lead += actLeadForPaMonth(model, p.name, m);
+              }
+              out[`${monthLabel(m)} %`] = lead > 0 ? Math.round((nu / lead) * 100) : "";
+            });
+            return out;
+          })
+        }
+      >
+        <StrikeRateByPatl model={model} teams={patlTeams} months={targetTableMonths} />
       </Panel>
 
       <Panel
