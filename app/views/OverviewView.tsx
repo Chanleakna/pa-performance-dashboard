@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
   attainmentOverMonths,
@@ -11,7 +11,7 @@ import {
   tarLeadForPaMonth,
   targetLeadForPaMonth,
 } from "../lib/model";
-import { type MonthKey } from "../lib/parse";
+import { type MonthKey, monthLabel, normName } from "../lib/parse";
 import { fmtInt, fmtPct, fmtCompact } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { DataStatus, LoadingState } from "../components/DataStatus";
@@ -84,6 +84,34 @@ function pctStyle(pct: number | null): React.CSSProperties {
 }
 const pctTxt = (p: number | null) => (p == null ? "—" : `${Math.round(p)}%`);
 
+/** One matrix cell: Act/Tar on top, a colored % beneath. */
+function MatrixCell({
+  act,
+  tar,
+  pct,
+  money,
+}: {
+  act: number;
+  tar: number;
+  pct: number | null;
+  money?: boolean;
+}) {
+  const f = money ? fmtCompact : fmtInt;
+  return (
+    <td className="whitespace-nowrap border-b border-l border-slate-100 px-1 py-0.5 text-center">
+      <div className="tabular-nums text-slate-500">
+        {f(act)}/{f(tar)}
+      </div>
+      <div
+        className="mt-0.5 rounded font-semibold tabular-nums"
+        style={pctStyle(pct)}
+      >
+        {pctTxt(pct)}
+      </div>
+    </td>
+  );
+}
+
 type PaSort = "sales" | "leads" | "nu" | "attainment" | "name";
 
 export function OverviewView() {
@@ -138,15 +166,71 @@ export function OverviewView() {
     };
   }, [model]);
 
-  // Per-PA rows, scoped by the slicers. Leads/NU/attainment respect the month
-  // scope; actual sales are cumulative (no month dimension in the sales tab).
-  const rows = useMemo<OvRow[]>(() => {
+  // PAs in scope (by PATL/PA selection).
+  const scopePas = useMemo(() => {
     if (!model) return [];
-    const scopePas = model.pas.filter((p) => {
+    return model.pas.filter((p) => {
       if (slicer.pas.length) return slicer.pas.includes(p.name);
       if (slicer.asms.length) return slicer.asms.includes(p.asm);
       return true;
     });
+  }, [model, slicer.pas, slicer.asms]);
+
+  // Months shown as columns in the monthly matrix: the 12 months of the
+  // selected year(s) (defaults to 2026), Jan→Dec.
+  const matrixMonths = useMemo<MonthKey[]>(() => {
+    const ys = slicer.years.length ? slicer.years : ["2026"];
+    const ms: MonthKey[] = [];
+    for (const y of ys)
+      for (let i = 1; i <= 12; i++) ms.push(`${y}-${String(i).padStart(2, "0")}`);
+    return Array.from(new Set(ms)).sort();
+  }, [slicer.years]);
+
+  // PA -> distinct store (outlet) names, from the Target tab.
+  const paStores = useMemo(() => {
+    const m = new Map<string, string[]>();
+    if (!model) return m;
+    for (const r of model.target.rows) {
+      if (!r.paName || !r.outlet) continue;
+      const k = normName(r.paName);
+      const arr = m.get(k) || [];
+      if (!arr.includes(r.outlet)) arr.push(r.outlet);
+      m.set(k, arr);
+    }
+    return m;
+  }, [model]);
+
+  // Monthly matrix: per PA, per month {lead act/tar/%, sales act/tar/%}.
+  const matrix = useMemo(() => {
+    if (!model) return [];
+    const list = scopePas.map((p) => {
+      const cells = matrixMonths.map((m) => {
+        const la = leadsForPaMonth(model, p.name, m);
+        const lt = targetLeadForPaMonth(model, p.name, m);
+        const sa = salesForPa(model, p.name, [m]);
+        const st = salesTargetForPa(model, p.name, [m]);
+        return {
+          la,
+          lt,
+          lp: lt > 0 ? (la / lt) * 100 : null,
+          sa,
+          st,
+          sp: st > 0 ? (sa / st) * 100 : null,
+        };
+      });
+      const totLeads = cells.reduce((s, c) => s + c.la, 0);
+      const totSales = cells.reduce((s, c) => s + c.sa, 0);
+      const store = (paStores.get(normName(p.name)) || []).join(", ");
+      return { name: p.name, asm: p.asm, store, cells, totLeads, totSales };
+    });
+    list.sort((a, b) => b.totLeads - a.totLeads || b.totSales - a.totSales);
+    return list.slice(0, 150).map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [model, scopePas, matrixMonths, paStores]);
+
+  // Per-PA rows, scoped by the slicers. Leads/NU/attainment respect the month
+  // scope; actual sales are cumulative (no month dimension in the sales tab).
+  const rows = useMemo<OvRow[]>(() => {
+    if (!model) return [];
     const attMonths = (monthScope ?? model.attainmentMonths).filter((m) =>
       model.attainmentMonths.includes(m)
     );
@@ -177,7 +261,7 @@ export function OverviewView() {
         salesPct: salesTar > 0 ? (sales / salesTar) * 100 : null,
       };
     });
-  }, [model, slicer.pas, slicer.asms, monthScope]);
+  }, [model, scopePas, monthScope]);
 
   // Team Leader aggregation from the scoped rows.
   const asmRows = useMemo(() => {
@@ -227,12 +311,6 @@ export function OverviewView() {
     });
   }, [rows, q, sortKey, asc]);
 
-  // Heatmap rows, sorted by sales then leads.
-  const heatList = useMemo(
-    () => [...rows].sort((a, b) => b.sales - a.sales || b.leads - a.leads).slice(0, 150),
-    [rows]
-  );
-
   if (!model) return <LoadingState />;
 
   const setSort = (k: PaSort) => {
@@ -255,8 +333,6 @@ export function OverviewView() {
     </th>
   );
 
-  const numCell = "whitespace-nowrap px-1.5 py-1 text-right tabular-nums";
-
   return (
     <div>
       <DataStatus data={data} />
@@ -278,70 +354,99 @@ export function OverviewView() {
         </div>
       )}
 
-      {/* PA · Lead (Act/Tar/%) · Sales (Act/Tar/%) heatmap */}
+      {/* Monthly matrix: Rank · Store · PA, then per-month Lead & Sales vs Target */}
       <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
         <PanelHead
-          title="PA · Lead & Sales vs Target"
-          hint="Act / Tar / % · green = achieved"
-          exportName="pa-lead-sales-vs-target"
+          title="Monthly Lead & Sales vs Target by PA"
+          hint="per month: Lead and Sales (Act/Tar/%)"
+          exportName="overview-monthly-matrix"
           exportRows={() =>
-            heatList.map((p) => ({
-              PA: p.name,
-              "Team Leader": p.asm,
-              "Lead Act": p.leads,
-              "Lead Tar": p.leadTar,
-              "Lead %": p.leadPct == null ? "" : Math.round(p.leadPct),
-              "Sales Act": Math.round(p.sales),
-              "Sales Tar": Math.round(p.salesTar),
-              "Sales %": p.salesPct == null ? "" : Math.round(p.salesPct),
-            }))
+            matrix.map((p) => {
+              const out: Record<string, unknown> = {
+                Rank: p.rank,
+                Store: p.store,
+                PA: p.name,
+                "Team Leader": p.asm,
+              };
+              matrixMonths.forEach((m, i) => {
+                const c = p.cells[i];
+                const lbl = monthLabel(m).replace(" 20", " '");
+                out[`${lbl} Lead Act`] = c.la;
+                out[`${lbl} Lead Tar`] = c.lt;
+                out[`${lbl} Lead %`] = c.lp == null ? "" : Math.round(c.lp);
+                out[`${lbl} Sales Act`] = Math.round(c.sa);
+                out[`${lbl} Sales Tar`] = Math.round(c.st);
+                out[`${lbl} Sales %`] = c.sp == null ? "" : Math.round(c.sp);
+              });
+              return out;
+            })
           }
         />
         <div className="no-scrollbar overflow-x-auto">
-          <table className="border-separate border-spacing-0.5 text-xs">
+          <table className="border-separate border-spacing-0 text-[10px]">
             <thead>
-              <tr className="text-slate-400">
-                <th className="sticky left-0 z-10 bg-white px-1.5 py-1 text-left font-medium">
-                  PA Name
+              <tr>
+                <th
+                  rowSpan={2}
+                  className="sticky left-0 z-10 border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500"
+                >
+                  # · PA · Store
                 </th>
-                <th className={numCell + " font-medium text-brand-600"} colSpan={3}>
-                  Lead (Act / Tar / %)
-                </th>
-                <th className={numCell + " font-medium text-teal-700"} colSpan={3}>
-                  Sales (Act / Tar / %)
-                </th>
+                {matrixMonths.map((m) => (
+                  <th
+                    key={m}
+                    colSpan={2}
+                    className="border-b border-l border-slate-200 px-1 py-1 text-center font-semibold text-slate-600"
+                  >
+                    {monthLabel(m).replace(" 20", " '")}
+                  </th>
+                ))}
+              </tr>
+              <tr>
+                {matrixMonths.map((m) => (
+                  <Fragment key={m}>
+                    <th className="border-b border-l border-slate-200 px-1 py-0.5 text-center font-medium text-brand-600">
+                      Lead
+                    </th>
+                    <th className="border-b border-slate-200 px-1 py-0.5 text-center font-medium text-teal-700">
+                      Sales
+                    </th>
+                  </Fragment>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {heatList.map((p) => (
-                <tr key={p.name}>
+              {matrix.map((p) => (
+                <tr key={p.name} className="align-middle">
                   <td
-                    className="sticky left-0 z-10 max-w-[140px] truncate bg-white px-1.5 py-1 text-slate-700"
-                    title={`${p.name} · ${p.asm}`}
+                    className="sticky left-0 z-10 max-w-[170px] truncate border-b border-slate-100 bg-white px-2 py-1"
+                    title={`${p.name} · ${p.store}`}
                   >
-                    {p.name}
+                    <div className="font-medium text-slate-800">
+                      <span className="text-slate-400">#{p.rank}</span> {p.name}
+                    </div>
+                    <div className="truncate text-[9px] text-slate-400">
+                      {p.store || "—"}
+                    </div>
                   </td>
-                  <td className={numCell + " text-slate-700"}>{fmtInt(p.leads)}</td>
-                  <td className={numCell + " text-slate-400"}>{fmtInt(p.leadTar)}</td>
-                  <td className={numCell + " rounded font-semibold"} style={pctStyle(p.leadPct)}>
-                    {pctTxt(p.leadPct)}
-                  </td>
-                  <td className={numCell + " text-slate-700"}>{fmtCompact(p.sales)}</td>
-                  <td className={numCell + " text-slate-400"}>{fmtCompact(p.salesTar)}</td>
-                  <td className={numCell + " rounded font-semibold"} style={pctStyle(p.salesPct)}>
-                    {pctTxt(p.salesPct)}
-                  </td>
+                  {p.cells.map((c, i) => (
+                    <Fragment key={i}>
+                      <MatrixCell act={c.la} tar={c.lt} pct={c.lp} />
+                      <MatrixCell act={c.sa} tar={c.st} pct={c.sp} money />
+                    </Fragment>
+                  ))}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
-          Lead Act = daily leads, Lead Tar = Tar.Lead; Sales Act = actual sales,
-          Sales Tar = target (joined by Code). % cells:{" "}
+          Each month shows <span className="font-medium text-brand-600">Lead</span>{" "}
+          and <span className="font-medium text-teal-700">Sales</span> as Act/Tar
+          with a % (
           <span className="font-medium text-emerald-700">green</span> ≥100%,{" "}
-          <span className="font-medium text-red-700">red</span> below — for the
-          selected Year/Month. Top 150 PAs by sales.
+          <span className="font-medium text-red-700">red</span> below). Ranked by
+          total leads. Top 150 PAs.
         </p>
       </div>
 
@@ -525,12 +630,17 @@ export function OverviewView() {
           </div>
           <div className="pt-1">
             <div className="font-medium text-slate-500">
-              Sample (first 4 in view): PA = sales / lead
+              Join sample — PA[code] = actualSales / targetSales:
             </div>
             <div className="break-all font-mono text-[10px]">
-              {heatList
-                .slice(0, 4)
-                .map((p) => `${p.name}=${Math.round(p.sales)}/${p.leads}`)
+              {model.target.rows
+                .slice(0, 8)
+                .map((r) => {
+                  const c = r.code.trim().toLowerCase();
+                  const a = Math.round(model.sales.byCode[c] || 0);
+                  const t = Math.round(model.salesTarget.byCode[c] || 0);
+                  return `${r.paName || "?"}[${r.code}]=${a}/${t}`;
+                })
                 .join("  ·  ") || "(none)"}
             </div>
           </div>
