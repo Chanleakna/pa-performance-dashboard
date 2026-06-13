@@ -62,8 +62,8 @@ function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode;
 
 // ---- heatmap -----------------------------------------------------------------
 
-// Working days per month used to derive the daily-lead target benchmark.
-const WORKING_DAYS = 24;
+// Fixed daily-lead target benchmark (absolute leads per working day, per PA).
+const DAILY_TARGET = 3;
 
 function HeatMap({
   model,
@@ -107,8 +107,8 @@ function HeatMap({
         let target = 0;
         for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
         const pct = target > 0 ? (actual / target) * 100 : null;
-        // Daily benchmark = monthly target spread over the working days.
-        const dailyTarget = target / WORKING_DAYS;
+        // Daily benchmark = fixed absolute target leads per working day.
+        const dailyTarget = DAILY_TARGET;
         return { pa, m, actual, target, dailyTarget, pct };
       })
       .sort((a, b) => b.actual - a.actual)
@@ -186,7 +186,7 @@ function HeatMap({
                 {fmtInt(r.actual)}
               </td>
               <td className="px-1 text-right tabular-nums text-slate-500">
-                {r.target > 0 ? dt.toFixed(1) : "—"}
+                {fmtInt(dt)}
               </td>
               <td className="px-1 text-right">
                 <AttainmentPill pct={r.pct} />
@@ -197,13 +197,12 @@ function HeatMap({
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Columns = day of month. Each day cell is benchmarked against the{" "}
-        <span className="font-medium">daily target</span> = monthly Tar.Lead ÷{" "}
-        {WORKING_DAYS} working days:{" "}
+        Columns = day of month. Each day cell is benchmarked against a fixed{" "}
+        <span className="font-medium">daily target of {DAILY_TARGET}</span> leads:{" "}
         <span className="font-medium text-emerald-700">green</span> = met that
-        day, <span className="font-medium text-red-700">red</span> = below.
-        Act = total actual, Day&nbsp;Tgt = daily target, % = actual ÷ monthly
-        target.
+        day (≥{DAILY_TARGET}), <span className="font-medium text-red-700">red</span>{" "}
+        = below. Act = total actual, Day&nbsp;Tgt = daily target, % = actual ÷
+        monthly target.
       </p>
     </div>
   );
@@ -740,7 +739,7 @@ export function BiReportView() {
 
       <Panel
         title="PA × Day Heatmap"
-        hint="green/red vs daily target (target ÷ 24) · top 30 PAs"
+        hint="green/red vs daily target of 3 · top 30 PAs"
         className="mt-3"
       >
         <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
