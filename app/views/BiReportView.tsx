@@ -503,6 +503,16 @@ export function BiReportView() {
 
       <DataStatus data={data} />
 
+      {(model.target.rows.length === 0 ||
+        (model.target.debug?.tarLeadCols ?? 0) === 0) && (
+        <div className="mb-3 rounded-lg border-2 border-status-red bg-red-50 p-2">
+          <div className="text-xs font-semibold text-status-red">
+            ⚠ Target Lead not detected — screenshot the box below and send it.
+          </div>
+          <Diagnostics model={model} open />
+        </div>
+      )}
+
       <CascadingSlicers
         state={slicer}
         onChange={setSlicer}
@@ -652,11 +662,14 @@ export function BiReportView() {
 }
 
 /** Collapsible parse diagnostics — helps pinpoint data/publish issues. */
-function Diagnostics({ model }: { model: DashboardModel }) {
+function Diagnostics({ model, open = false }: { model: DashboardModel; open?: boolean }) {
   const d = model.target.debug;
   const line = "flex justify-between gap-3 border-b border-slate-100 py-0.5";
   return (
-    <details className="mt-4 rounded-lg border border-slate-200 bg-white p-3 text-[11px] text-slate-600">
+    <details
+      open={open}
+      className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-[11px] text-slate-600"
+    >
       <summary className="cursor-pointer font-semibold text-slate-700">
         Diagnostics (parse health)
       </summary>
