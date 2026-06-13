@@ -103,51 +103,90 @@ interface HeatRow {
   pct: number | null;
 }
 
-/** Compute the PA × day grid (shared by the heatmap and its CSV export). */
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+interface HeatCol {
+  key: string;
+  label: string;
+  sub: string;
+}
+
+/**
+ * Compute the PA × day grid. When `fiscalMonth` is set (a single month is
+ * selected), columns run the business month 26th→25th with real weekday labels;
+ * otherwise columns are plain day-of-month (1..max), aggregated across scope.
+ */
 function computeHeatmapData(
   model: DashboardModel,
   filter: Filter,
-  summaryMonths: MonthKey[]
-): { cols: { key: string; label: string }[]; rows: HeatRow[]; max: number } {
-  const daily = filteredDaily(model, filter);
+  summaryMonths: MonthKey[],
+  fiscalMonth: MonthKey | null,
+  scopeFilter: Filter
+): { cols: HeatCol[]; rows: HeatRow[]; max: number } {
+  let cols: HeatCol[];
+  let daily;
+  let keyFor: (d: { createdAt: Date | null }) => string | null;
 
-  // Always a daily trend: columns are day-of-month (1, 2, 3 …), aggregated
-  // across whatever months are in scope. Never month columns.
-  let maxDay = 0;
+  if (fiscalMonth) {
+    const [y, mo] = fiscalMonth.split("-").map(Number); // mo is 1-based
+    const start = new Date(y, mo - 1, 26); // 26th of the month
+    const end = new Date(y, mo, 25, 23, 59, 59); // 25th of the next month
+    cols = [];
+    const cur = new Date(start);
+    while (cur <= end) {
+      cols.push({
+        key: `${cur.getFullYear()}-${cur.getMonth() + 1}-${cur.getDate()}`,
+        label: String(cur.getDate()),
+        sub: WEEKDAYS[cur.getDay()],
+      });
+      cur.setDate(cur.getDate() + 1);
+    }
+    daily = filteredDaily(model, scopeFilter).filter(
+      (d) => d.createdAt && d.createdAt >= start && d.createdAt <= end
+    );
+    keyFor = (d) =>
+      d.createdAt
+        ? `${d.createdAt.getFullYear()}-${d.createdAt.getMonth() + 1}-${d.createdAt.getDate()}`
+        : null;
+  } else {
+    daily = filteredDaily(model, filter);
+    let maxDay = 0;
+    for (const d of daily) if (d.createdAt) maxDay = Math.max(maxDay, d.createdAt.getDate());
+    if (maxDay === 0) maxDay = 31;
+    cols = Array.from({ length: maxDay }, (_, i) => ({
+      key: String(i + 1),
+      label: String(i + 1),
+      sub: "",
+    }));
+    keyFor = (d) => (d.createdAt ? String(d.createdAt.getDate()) : null);
+  }
+
   const byPa = new Map<string, Map<string, number>>();
   for (const d of daily) {
-    if (!d.paName || !d.createdAt) continue;
-    const day = d.createdAt.getDate();
-    if (day > maxDay) maxDay = day;
-    const colKey = String(day);
+    if (!d.paName) continue;
+    const k = keyFor(d);
+    if (!k) continue;
     let inner = byPa.get(d.paName);
     if (!inner) {
       inner = new Map();
       byPa.set(d.paName, inner);
     }
-    inner.set(colKey, (inner.get(colKey) || 0) + 1);
+    inner.set(k, (inner.get(k) || 0) + 1);
   }
-  if (maxDay === 0) maxDay = 31;
-  const cols = Array.from({ length: maxDay }, (_, i) => ({
-    key: String(i + 1),
-    label: String(i + 1),
-  }));
 
   const rows: HeatRow[] = Array.from(byPa.entries())
     .map(([pa, m]) => {
       const actual = Array.from(m.values()).reduce((a, b) => a + b, 0);
-      let target = 0;
-      for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
+      const target = fiscalMonth
+        ? tarLeadForPaMonth(model, pa, fiscalMonth)
+        : summaryMonths.reduce((s, mk) => s + tarLeadForPaMonth(model, pa, mk), 0);
       const pct = target > 0 ? (actual / target) * 100 : null;
       return { pa, m, actual, target, dailyTarget: DAILY_TARGET, pct };
     })
     .sort((a, b) => b.actual - a.actual)
     .slice(0, 30);
 
-  const max = rows.reduce(
-    (mx, r) => Math.max(mx, ...Array.from(r.m.values())),
-    1
-  );
+  const max = rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1);
   return { cols, rows, max };
 }
 
@@ -155,14 +194,16 @@ function computeHeatmapData(
 function heatmapExport(
   model: DashboardModel,
   filter: Filter,
-  summaryMonths: MonthKey[]
+  summaryMonths: MonthKey[],
+  fiscalMonth: MonthKey | null,
+  scopeFilter: Filter
 ): Record<string, unknown>[] {
-  const { cols, rows } = computeHeatmapData(model, filter, summaryMonths);
+  const { cols, rows } = computeHeatmapData(model, filter, summaryMonths, fiscalMonth, scopeFilter);
   return rows.map((r) => {
     const out: Record<string, unknown> = { PA: r.pa };
-    for (const c of cols) out[`D${c.label}`] = r.m.get(c.key) || 0;
+    for (const c of cols) out[c.sub ? `${c.label} ${c.sub}` : `D${c.label}`] = r.m.get(c.key) || 0;
     out["Actual"] = r.actual;
-    out["Daily Target"] = r.dailyTarget;
+    out["Target"] = r.target;
     out["%"] = r.pct == null ? "" : Math.round(r.pct);
     return out;
   });
@@ -172,15 +213,18 @@ function HeatMap({
   model,
   filter,
   summaryMonths,
+  fiscalMonth,
+  scopeFilter,
 }: {
   model: DashboardModel;
   filter: Filter;
-  /** Months over which Actual/Target/% are rolled up (apple-to-apple). */
   summaryMonths: MonthKey[];
+  fiscalMonth: MonthKey | null;
+  scopeFilter: Filter;
 }) {
-  const { cols, rows, max } = useMemo(
-    () => computeHeatmapData(model, filter, summaryMonths),
-    [model, filter, summaryMonths]
+  const { cols, rows } = useMemo(
+    () => computeHeatmapData(model, filter, summaryMonths, fiscalMonth, scopeFilter),
+    [model, filter, summaryMonths, fiscalMonth, scopeFilter]
   );
   const [sortKey, setSortKey] = useState<"pa" | "act" | "pct">("act");
   const [asc, setAsc] = useState(false);
@@ -218,14 +262,15 @@ function HeatMap({
               <SortCaret active={sortKey === "pa"} asc={asc} />
             </th>
             {cols.map((c) => (
-              <th key={c.key} className="sticky top-0 z-20 bg-white px-0.5 font-medium text-slate-400">
-                {c.label}
+              <th key={c.key} className="sticky top-0 z-20 bg-white px-0.5 text-center font-medium text-slate-400 leading-tight">
+                <div>{c.label}</div>
+                {c.sub && <div className="text-[8px] text-slate-400">{c.sub}</div>}
               </th>
             ))}
             <th onClick={() => setSort("act")} className={hd}>
               Act<SortCaret active={sortKey === "act"} asc={asc} />
             </th>
-            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Day&nbsp;Tgt</th>
+            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Tar</th>
             <th onClick={() => setSort("pct")} className={hd}>
               %<SortCaret active={sortKey === "pct"} asc={asc} />
             </th>
@@ -246,29 +291,24 @@ function HeatMap({
               </td>
               {cols.map((c) => {
                 const v = r.m.get(c.key) || 0;
-                // Benchmark each day against the daily target (monthly ÷ 24):
-                // green = met the daily target, red = below it, blank = no work.
-                let bg = "#f8fafc";
-                let color = "#94a3b8";
-                if (v > 0) {
-                  if (dt > 0 && v >= dt) {
-                    const i = Math.min(v / dt - 1, 1);
-                    bg = `rgba(22, 163, 74, ${0.3 + 0.45 * i})`;
-                    color = i > 0.4 ? "#fff" : "#14532d";
-                  } else if (dt > 0) {
-                    const i = 1 - v / dt;
-                    bg = `rgba(239, 68, 68, ${0.25 + 0.5 * i})`;
-                    color = i > 0.55 ? "#fff" : "#7f1d1d";
-                  } else {
-                    bg = `rgba(148, 163, 184, ${0.15 + 0.5 * (v / max)})`;
-                    color = "#334155";
-                  }
+                // Benchmark each day against the fixed daily target: green when
+                // met (>= target), red when below — INCLUDING blank/0 days.
+                let bg: string;
+                let color: string;
+                if (v >= dt) {
+                  const i = Math.min(v / dt - 1, 1);
+                  bg = `rgba(22, 163, 74, ${0.3 + 0.45 * i})`;
+                  color = i > 0.4 ? "#fff" : "#14532d";
+                } else {
+                  const i = dt > 0 ? (dt - v) / dt : 1; // deeper red the further below
+                  bg = `rgba(239, 68, 68, ${0.2 + 0.5 * i})`;
+                  color = i > 0.6 ? "#fff" : "#7f1d1d";
                 }
                 return (
                   <td
                     key={c.key}
-                    title={`${r.pa} · day ${c.label}: ${v} vs daily target ${dt.toFixed(1)}`}
-                    className="h-5 w-5 min-w-[20px] rounded text-center text-[9px]"
+                    title={`${r.pa} · ${c.label} ${c.sub}: ${v} (target ${dt}/day)`}
+                    className="h-5 w-6 min-w-[22px] rounded text-center text-[9px]"
                     style={{ backgroundColor: bg, color }}
                   >
                     {v || ""}
@@ -279,7 +319,7 @@ function HeatMap({
                 {fmtInt(r.actual)}
               </td>
               <td className="px-1 text-right tabular-nums text-slate-500">
-                {fmtInt(dt)}
+                {fmtInt(r.target)}
               </td>
               <td className="px-1 text-right">
                 <AttainmentPill pct={r.pct} />
@@ -290,12 +330,13 @@ function HeatMap({
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Columns = day of month. Each day cell is benchmarked against a fixed{" "}
-        <span className="font-medium">daily target of {DAILY_TARGET}</span> leads:{" "}
-        <span className="font-medium text-emerald-700">green</span> = met that
-        day (≥{DAILY_TARGET}), <span className="font-medium text-red-700">red</span>{" "}
-        = below. Act = total actual, Day&nbsp;Tgt = daily target, % = actual ÷
-        monthly target.
+        Business month runs <span className="font-medium">26th → 25th</span> (with
+        weekday). Each day is benchmarked against a fixed{" "}
+        <span className="font-medium">daily target of {DAILY_TARGET}</span>:{" "}
+        <span className="font-medium text-emerald-700">green</span> = met (≥
+        {DAILY_TARGET}), <span className="font-medium text-red-700">red</span> =
+        below (blank/0 days are red too). Act = total actual leads, Tar = monthly
+        Tar.Lead, % = actual ÷ Tar.
       </p>
     </div>
   );
@@ -1127,12 +1168,18 @@ export function BiReportView() {
 
       <Panel
         title="PA × Day Heatmap"
-        hint="green/red vs daily target of 3 · top 30 PAs"
+        hint={specificMonth ? "business month 26→25 · vs 3/day" : "select one month for 26→25 view"}
         className="mt-3"
         exportName="pa-by-day"
-        exportRows={() => heatmapExport(model, filter, summaryMonths)}
+        exportRows={() => heatmapExport(model, filter, summaryMonths, specificMonth, scopeOnly)}
       >
-        <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
+        <HeatMap
+          model={model}
+          filter={filter}
+          summaryMonths={summaryMonths}
+          fiscalMonth={specificMonth}
+          scopeFilter={scopeOnly}
+        />
       </Panel>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
