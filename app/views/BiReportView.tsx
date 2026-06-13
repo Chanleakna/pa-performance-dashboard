@@ -75,44 +75,28 @@ function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode;
 
 // ---- heatmap -----------------------------------------------------------------
 
-function daysInMonth(monthKey: string): number {
-  const [y, m] = monthKey.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-
 function HeatMap({
   model,
   filter,
-  specificMonth,
   summaryMonths,
 }: {
   model: DashboardModel;
   filter: Filter;
-  /** A single selected month => day columns; otherwise month columns. */
-  specificMonth: string | null;
   /** Months over which Actual/Target/% are rolled up (apple-to-apple). */
   summaryMonths: MonthKey[];
 }) {
   const { cols, rows } = useMemo(() => {
     const daily = filteredDaily(model, filter);
 
-    const cols: { key: string; label: string }[] = specificMonth
-      ? Array.from({ length: daysInMonth(specificMonth) }, (_, i) => ({
-          key: String(i + 1),
-          label: String(i + 1),
-        }))
-      : summaryMonths.map((m) => ({ key: m, label: monthLabel(m).split(" ")[0] }));
-
-    // rows = PAs in scope (cap to keep mobile memory low)
+    // Always a daily trend: columns are day-of-month (1, 2, 3 …), aggregated
+    // across whatever months are in scope. Never month columns.
+    let maxDay = 0;
     const byPa = new Map<string, Map<string, number>>();
     for (const d of daily) {
-      if (!d.paName) continue;
-      const colKey = specificMonth
-        ? d.createdAt
-          ? String(d.createdAt.getDate())
-          : null
-        : d.month;
-      if (!colKey) continue;
+      if (!d.paName || !d.createdAt) continue;
+      const day = d.createdAt.getDate();
+      if (day > maxDay) maxDay = day;
+      const colKey = String(day);
       let inner = byPa.get(d.paName);
       if (!inner) {
         inner = new Map();
@@ -120,11 +104,16 @@ function HeatMap({
       }
       inner.set(colKey, (inner.get(colKey) || 0) + 1);
     }
+    if (maxDay === 0) maxDay = 31;
+    const cols = Array.from({ length: maxDay }, (_, i) => ({
+      key: String(i + 1),
+      label: String(i + 1),
+    }));
 
     const rows = Array.from(byPa.entries())
       .map(([pa, m]) => {
         const actual = Array.from(m.values()).reduce((a, b) => a + b, 0);
-        // Target = sum of Tar.Lead over the same months (only Tar.Lead, per spec).
+        // Target = sum of Tar.Lead over the scope months (only Tar.Lead, per spec).
         let target = 0;
         for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
         const pct = target > 0 ? (actual / target) * 100 : null;
@@ -134,7 +123,7 @@ function HeatMap({
       .slice(0, 30);
 
     return { cols, rows };
-  }, [model, filter, specificMonth, summaryMonths]);
+  }, [model, filter, summaryMonths]);
 
   const max = useMemo(
     () => rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1),
@@ -199,9 +188,98 @@ function HeatMap({
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Cells = daily lead count. Act / Tar / % roll up over the selected scope
-        using only <span className="font-medium">Tar.Lead</span> (apple-to-apple).
-        Months without a Tar.Lead (e.g. March) show no %.
+        Columns = day of month (1, 2, 3 …). Cells = daily lead count. Act / Tar /
+        % roll up over the selected scope using only{" "}
+        <span className="font-medium">Tar.Lead</span> (apple-to-apple). Months
+        without a Tar.Lead (e.g. March) show no %.
+      </p>
+    </div>
+  );
+}
+
+// ---- Target Lead by PA (PA rows × month columns + a Total row) ---------------
+
+function TargetByPaTable({
+  model,
+  pas,
+  months,
+}: {
+  model: DashboardModel;
+  pas: { name: string; asm: string }[];
+  months: MonthKey[];
+}) {
+  const { rows, colTotals, grand } = useMemo(() => {
+    const rows = pas
+      .map((p) => {
+        const vals = months.map((m) => tarLeadForPaMonth(model, p.name, m));
+        const total = vals.reduce((a, b) => a + b, 0);
+        return { name: p.name, asm: p.asm, vals, total };
+      })
+      .filter((r) => r.total > 0)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 150);
+
+    const colTotals = months.map((_, i) =>
+      rows.reduce((a, r) => a + r.vals[i], 0)
+    );
+    const grand = colTotals.reduce((a, b) => a + b, 0);
+    return { rows, colTotals, grand };
+  }, [model, pas, months]);
+
+  if (months.length === 0)
+    return (
+      <p className="py-6 text-center text-xs text-slate-400">
+        No target months in scope.
+      </p>
+    );
+
+  const cell = "whitespace-nowrap px-1.5 py-1 text-right tabular-nums";
+  const nameCell =
+    "sticky left-0 z-10 max-w-[120px] truncate bg-white px-1.5 py-1 text-left";
+
+  return (
+    <div className="no-scrollbar overflow-x-auto">
+      <table className="text-[11px]">
+        <thead>
+          <tr className="border-b border-slate-200 text-slate-400">
+            <th className={nameCell + " font-medium"}>PA</th>
+            {months.map((m) => (
+              <th key={m} className={cell + " font-medium"}>
+                {monthLabel(m).split(" ")[0]}
+              </th>
+            ))}
+            <th className={cell + " font-semibold text-slate-500"}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {/* Accumulated total of all PAs together. */}
+          <tr className="border-b border-slate-200 bg-brand-50 font-semibold text-brand-800">
+            <td className={nameCell + " bg-brand-50"}>Total (all PAs)</td>
+            {colTotals.map((t, i) => (
+              <td key={i} className={cell}>
+                {fmtInt(t)}
+              </td>
+            ))}
+            <td className={cell}>{fmtInt(grand)}</td>
+          </tr>
+          {rows.map((r) => (
+            <tr key={r.name} className="border-b border-slate-50 last:border-0">
+              <td className={nameCell + " text-slate-700"} title={`${r.name} · ${r.asm}`}>
+                {r.name}
+              </td>
+              {r.vals.map((v, i) => (
+                <td key={i} className={cell + " text-slate-600"}>
+                  {v > 0 ? fmtInt(v) : "—"}
+                </td>
+              ))}
+              <td className={cell + " font-medium text-slate-800"}>{fmtInt(r.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[11px] text-slate-400">
+        Values are <span className="font-medium">Target Lead</span> (Tar.Lead) per
+        PA per month. The top row accumulates all PAs in scope.
       </p>
     </div>
   );
@@ -261,6 +339,26 @@ export function BiReportView() {
     () => monthScope ?? allMonths,
     [monthScope, allMonths]
   );
+
+  // PAs in scope (for the Target-by-PA table), respecting the PATL/PA cascade.
+  const scopePas = useMemo(() => {
+    if (!model) return [];
+    return model.pas.filter((p) => {
+      if (slicer.pas.length) return slicer.pas.includes(p.name);
+      if (slicer.asms.length) return slicer.asms.includes(p.asm);
+      return true;
+    });
+  }, [model, slicer.pas, slicer.asms]);
+
+  // Target months to show as columns (target tab months, scoped by Year/Month).
+  const targetTableMonths = useMemo<MonthKey[]>(() => {
+    if (!model) return [];
+    let ms = model.targetMonths;
+    if (slicer.months.length) ms = ms.filter((m) => slicer.months.includes(m));
+    else if (slicer.years.length)
+      ms = ms.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")));
+    return ms;
+  }, [model, slicer.months, slicer.years]);
 
   // PA options cascade from the selected PATLs (union; [] => every PA).
   const pasForAsmsFn = useMemo(() => {
@@ -469,16 +567,19 @@ export function BiReportView() {
       </div>
 
       <Panel
-        title="PA × Day Heatmap"
-        hint="leads + Actual/Target/% · top 30 PAs"
+        title="Target Lead by PA"
+        hint="Tar.Lead · PA × month + Total"
         className="mt-3"
       >
-        <HeatMap
-          model={model}
-          filter={filter}
-          specificMonth={specificMonth}
-          summaryMonths={summaryMonths}
-        />
+        <TargetByPaTable model={model} pas={scopePas} months={targetTableMonths} />
+      </Panel>
+
+      <Panel
+        title="PA × Day Heatmap"
+        hint="by day · leads + Actual/Target/% · top 30 PAs"
+        className="mt-3"
+      >
+        <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
       </Panel>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
