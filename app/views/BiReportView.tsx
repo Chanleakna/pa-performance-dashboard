@@ -15,6 +15,7 @@ import {
 } from "../lib/model";
 import { monthLabel, type MonthKey } from "../lib/parse";
 import { fmtInt, fmtPct } from "../lib/format";
+import { downloadCsv } from "../lib/csv";
 import { DataStatus, LoadingState } from "../components/DataStatus";
 import { AttainmentPill, CollapsibleCard } from "../components/ui";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
@@ -26,22 +27,49 @@ import {
 
 // ---- small presentational helpers -------------------------------------------
 
+/** Small CSV export button; computes rows lazily on click. */
+function ExportButton({
+  rows,
+  name,
+}: {
+  rows: () => Record<string, unknown>[];
+  name: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => downloadCsv(name, rows())}
+      className="shrink-0 rounded border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 hover:bg-brand-50"
+      title="Download this section as CSV"
+    >
+      ⬇ CSV
+    </button>
+  );
+}
+
 function Panel({
   title,
   hint,
   children,
   className = "",
+  exportRows,
+  exportName,
 }: {
   title: string;
   hint?: string;
   children: React.ReactNode;
   className?: string;
+  exportRows?: () => Record<string, unknown>[];
+  exportName?: string;
 }) {
   return (
     <div className={"rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100 " + className}>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+        <div className="flex shrink-0 items-center gap-2">
+          {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+          {exportRows && <ExportButton rows={exportRows} name={exportName || title} />}
+        </div>
       </div>
       {children}
     </div>
@@ -65,6 +93,80 @@ function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode;
 // Fixed daily-lead target benchmark (absolute leads per working day, per PA).
 const DAILY_TARGET = 3;
 
+interface HeatRow {
+  pa: string;
+  m: Map<string, number>;
+  actual: number;
+  target: number;
+  dailyTarget: number;
+  pct: number | null;
+}
+
+/** Compute the PA × day grid (shared by the heatmap and its CSV export). */
+function computeHeatmapData(
+  model: DashboardModel,
+  filter: Filter,
+  summaryMonths: MonthKey[]
+): { cols: { key: string; label: string }[]; rows: HeatRow[]; max: number } {
+  const daily = filteredDaily(model, filter);
+
+  // Always a daily trend: columns are day-of-month (1, 2, 3 …), aggregated
+  // across whatever months are in scope. Never month columns.
+  let maxDay = 0;
+  const byPa = new Map<string, Map<string, number>>();
+  for (const d of daily) {
+    if (!d.paName || !d.createdAt) continue;
+    const day = d.createdAt.getDate();
+    if (day > maxDay) maxDay = day;
+    const colKey = String(day);
+    let inner = byPa.get(d.paName);
+    if (!inner) {
+      inner = new Map();
+      byPa.set(d.paName, inner);
+    }
+    inner.set(colKey, (inner.get(colKey) || 0) + 1);
+  }
+  if (maxDay === 0) maxDay = 31;
+  const cols = Array.from({ length: maxDay }, (_, i) => ({
+    key: String(i + 1),
+    label: String(i + 1),
+  }));
+
+  const rows: HeatRow[] = Array.from(byPa.entries())
+    .map(([pa, m]) => {
+      const actual = Array.from(m.values()).reduce((a, b) => a + b, 0);
+      let target = 0;
+      for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
+      const pct = target > 0 ? (actual / target) * 100 : null;
+      return { pa, m, actual, target, dailyTarget: DAILY_TARGET, pct };
+    })
+    .sort((a, b) => b.actual - a.actual)
+    .slice(0, 30);
+
+  const max = rows.reduce(
+    (mx, r) => Math.max(mx, ...Array.from(r.m.values())),
+    1
+  );
+  return { cols, rows, max };
+}
+
+/** CSV rows for the PA × day heatmap. */
+function heatmapExport(
+  model: DashboardModel,
+  filter: Filter,
+  summaryMonths: MonthKey[]
+): Record<string, unknown>[] {
+  const { cols, rows } = computeHeatmapData(model, filter, summaryMonths);
+  return rows.map((r) => {
+    const out: Record<string, unknown> = { PA: r.pa };
+    for (const c of cols) out[`D${c.label}`] = r.m.get(c.key) || 0;
+    out["Actual"] = r.actual;
+    out["Daily Target"] = r.dailyTarget;
+    out["%"] = r.pct == null ? "" : Math.round(r.pct);
+    return out;
+  });
+}
+
 function HeatMap({
   model,
   filter,
@@ -75,51 +177,9 @@ function HeatMap({
   /** Months over which Actual/Target/% are rolled up (apple-to-apple). */
   summaryMonths: MonthKey[];
 }) {
-  const { cols, rows } = useMemo(() => {
-    const daily = filteredDaily(model, filter);
-
-    // Always a daily trend: columns are day-of-month (1, 2, 3 …), aggregated
-    // across whatever months are in scope. Never month columns.
-    let maxDay = 0;
-    const byPa = new Map<string, Map<string, number>>();
-    for (const d of daily) {
-      if (!d.paName || !d.createdAt) continue;
-      const day = d.createdAt.getDate();
-      if (day > maxDay) maxDay = day;
-      const colKey = String(day);
-      let inner = byPa.get(d.paName);
-      if (!inner) {
-        inner = new Map();
-        byPa.set(d.paName, inner);
-      }
-      inner.set(colKey, (inner.get(colKey) || 0) + 1);
-    }
-    if (maxDay === 0) maxDay = 31;
-    const cols = Array.from({ length: maxDay }, (_, i) => ({
-      key: String(i + 1),
-      label: String(i + 1),
-    }));
-
-    const rows = Array.from(byPa.entries())
-      .map(([pa, m]) => {
-        const actual = Array.from(m.values()).reduce((a, b) => a + b, 0);
-        // Target = sum of Tar.Lead over the scope months (only Tar.Lead, per spec).
-        let target = 0;
-        for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
-        const pct = target > 0 ? (actual / target) * 100 : null;
-        // Daily benchmark = fixed absolute target leads per working day.
-        const dailyTarget = DAILY_TARGET;
-        return { pa, m, actual, target, dailyTarget, pct };
-      })
-      .sort((a, b) => b.actual - a.actual)
-      .slice(0, 30);
-
-    return { cols, rows };
-  }, [model, filter, summaryMonths]);
-
-  const max = useMemo(
-    () => rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1),
-    [rows]
+  const { cols, rows, max } = useMemo(
+    () => computeHeatmapData(model, filter, summaryMonths),
+    [model, filter, summaryMonths]
   );
 
   if (rows.length === 0)
@@ -261,6 +321,79 @@ function AttainBadge({ pct }: { pct: number | null }) {
   );
 }
 
+interface AttainRow {
+  name: string;
+  asm: string;
+  cells: { t: number; a: number; pct: number | null }[];
+  tTot: number;
+  aTot: number;
+  pctTot: number | null;
+}
+
+/** Compute the attainment matrix (shared by the heatmap and CSV export). */
+function computeAttainmentData(
+  model: DashboardModel,
+  pas: { name: string; asm: string }[],
+  months: MonthKey[]
+) {
+  const rows: AttainRow[] = pas
+    .map((p) => {
+      const cells = months.map((m) => {
+        // Use Tar.Lead, or Quali.Lead where Tar.Lead is absent (March).
+        const t = targetLeadForPaMonth(model, p.name, m);
+        const a = leadsForPaMonth(model, p.name, m);
+        return { t, a, pct: t > 0 ? (a / t) * 100 : null };
+      });
+      const tTot = cells.reduce((s, c) => s + c.t, 0);
+      const aTot = cells.reduce((s, c) => s + c.a, 0);
+      const pctTot = tTot > 0 ? (aTot / tTot) * 100 : null;
+      return { name: p.name, asm: p.asm, cells, tTot, aTot, pctTot };
+    })
+    .filter((r) => r.tTot > 0)
+    .sort((a, b) => b.tTot - a.tTot)
+    .slice(0, 150);
+
+  const totalsByMonth = months.map((_, i) => {
+    let a = 0;
+    let t = 0;
+    for (const r of rows) {
+      a += r.cells[i].a;
+      t += r.cells[i].t;
+    }
+    return { a, t, pct: t > 0 ? (a / t) * 100 : null };
+  });
+  let A = 0;
+  let T = 0;
+  for (const r of rows) {
+    A += r.aTot;
+    T += r.tTot;
+  }
+  const grand = { a: A, t: T, pct: T > 0 ? (A / T) * 100 : null };
+  return { rows, totalsByMonth, grand };
+}
+
+/** CSV rows for the attainment matrix (% with Actual/Target per month). */
+function attainmentExport(
+  model: DashboardModel,
+  pas: { name: string; asm: string }[],
+  months: MonthKey[]
+): Record<string, unknown>[] {
+  const { rows } = computeAttainmentData(model, pas, months);
+  const pctStr = (p: number | null) => (p == null ? "" : Math.round(p));
+  return rows.map((r) => {
+    const out: Record<string, unknown> = { PA: r.name, "Team Leader": r.asm };
+    months.forEach((m, i) => {
+      out[`${monthLabel(m)} %`] = pctStr(r.cells[i].pct);
+      out[`${monthLabel(m)} Act`] = r.cells[i].a;
+      out[`${monthLabel(m)} Tgt`] = r.cells[i].t;
+    });
+    out["Total Act"] = r.aTot;
+    out["Total Tgt"] = r.tTot;
+    out["Total %"] = pctStr(r.pctTot);
+    return out;
+  });
+}
+
 function AttainmentHeatmap({
   model,
   pas,
@@ -270,42 +403,10 @@ function AttainmentHeatmap({
   pas: { name: string; asm: string }[];
   months: MonthKey[];
 }) {
-  const { rows, totalsByMonth, grand } = useMemo(() => {
-    const rows = pas
-      .map((p) => {
-        const cells = months.map((m) => {
-          // Use Tar.Lead, or Quali.Lead where Tar.Lead is absent (March).
-          const t = targetLeadForPaMonth(model, p.name, m);
-          const a = leadsForPaMonth(model, p.name, m);
-          return { t, a, pct: t > 0 ? (a / t) * 100 : null };
-        });
-        const tTot = cells.reduce((s, c) => s + c.t, 0);
-        const aTot = cells.reduce((s, c) => s + c.a, 0);
-        const pctTot = tTot > 0 ? (aTot / tTot) * 100 : null;
-        return { name: p.name, asm: p.asm, cells, tTot, aTot, pctTot };
-      })
-      .filter((r) => r.tTot > 0)
-      .sort((a, b) => b.tTot - a.tTot)
-      .slice(0, 150);
-
-    const totalsByMonth = months.map((_, i) => {
-      let a = 0;
-      let t = 0;
-      for (const r of rows) {
-        a += r.cells[i].a;
-        t += r.cells[i].t;
-      }
-      return { a, t, pct: t > 0 ? (a / t) * 100 : null };
-    });
-    let A = 0;
-    let T = 0;
-    for (const r of rows) {
-      A += r.aTot;
-      T += r.tTot;
-    }
-    const grand = { a: A, t: T, pct: T > 0 ? (A / T) * 100 : null };
-    return { rows, totalsByMonth, grand };
-  }, [model, pas, months]);
+  const { rows, totalsByMonth, grand } = useMemo(
+    () => computeAttainmentData(model, pas, months),
+    [model, pas, months]
+  );
 
   if (months.length === 0)
     return (
@@ -656,7 +757,18 @@ export function BiReportView() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel title="Monthly Lead vs Target" hint="all months · Tar.Lead only">
+        <Panel
+          title="Monthly Lead vs Target"
+          hint="all months · Tar.Lead only"
+          exportName="lead-vs-target"
+          exportRows={() =>
+            leadVsTarget.map((r) => ({
+              Month: r.label,
+              "Target Lead": r.Target,
+              "Actual Lead": r.Actual,
+            }))
+          }
+        >
           <GroupedBarChart
             data={leadVsTarget}
             xKey="label"
@@ -678,6 +790,10 @@ export function BiReportView() {
         <Panel
           title="Lead & NU Trend"
           hint={specificMonth ? "by day" : "by month"}
+          exportName="lead-nu-trend"
+          exportRows={() =>
+            trend.map((r) => ({ Period: r.label, Leads: r.Leads, "New Users": r.NU }))
+          }
         >
           <DailyTrendChart
             data={trend}
@@ -694,6 +810,14 @@ export function BiReportView() {
         title="Monthly NU: Target vs Actual"
         hint="all months · Tar.NU vs Act.NU"
         className="mt-3"
+        exportName="nu-target-vs-actual"
+        exportRows={() =>
+          nuTargetVsActual.map((r) => ({
+            Month: r.label,
+            "Target NU": r.Target,
+            "Actual NU": r.Actual,
+          }))
+        }
       >
         <GroupedBarChart
           data={nuTargetVsActual}
@@ -709,6 +833,8 @@ export function BiReportView() {
         title="Attainment % by PA"
         hint="all months · green = achieved · red = below"
         className="mt-3"
+        exportName="attainment-by-pa"
+        exportRows={() => attainmentExport(model, scopePas, targetTableMonths)}
       >
         <AttainmentHeatmap model={model} pas={scopePas} months={targetTableMonths} />
       </Panel>
@@ -717,6 +843,22 @@ export function BiReportView() {
         title="% Attainment by PATL"
         hint="tap a team leader to expand its PAs"
         className="mt-3"
+        exportName="attainment-by-patl"
+        exportRows={() =>
+          patlTeams.map(([asm, teamPas]) => {
+            const out: Record<string, unknown> = {
+              "Team Leader": asm,
+              PAs: teamPas.length,
+            };
+            targetTableMonths.forEach((m) => {
+              const p = combinedAttainment(model, teamPas, [m]);
+              out[`${monthLabel(m)} %`] = p == null ? "" : Math.round(p);
+            });
+            const tot = combinedAttainment(model, teamPas, targetTableMonths);
+            out["Total %"] = tot == null ? "" : Math.round(tot);
+            return out;
+          })
+        }
       >
         <div className="space-y-2">
           {patlTeams.map(([asm, teamPas]) => (
@@ -741,12 +883,19 @@ export function BiReportView() {
         title="PA × Day Heatmap"
         hint="green/red vs daily target of 3 · top 30 PAs"
         className="mt-3"
+        exportName="pa-by-day"
+        exportRows={() => heatmapExport(model, filter, summaryMonths)}
       >
         <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
       </Panel>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel title="Leads by Product" hint="from daily Product column">
+        <Panel
+          title="Leads by Product"
+          hint="from daily Product column"
+          exportName="leads-by-product"
+          exportRows={() => byProduct.map((r) => ({ Product: r.name, Leads: r.leads }))}
+        >
           <HorizontalLabeledBar
             data={byProduct}
             dataKey="leads"
@@ -756,7 +905,12 @@ export function BiReportView() {
           />
         </Panel>
 
-        <Panel title="Leads by Customer" hint="top 15 outlets (Full Name)">
+        <Panel
+          title="Leads by Customer"
+          hint="top 15 outlets (Full Name)"
+          exportName="leads-by-customer"
+          exportRows={() => byCustomer.map((r) => ({ Customer: r.name, Leads: r.leads }))}
+        >
           <HorizontalLabeledBar
             data={byCustomer}
             dataKey="leads"
