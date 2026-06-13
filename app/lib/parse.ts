@@ -565,3 +565,78 @@ export function parseTraining(csv: string): TrainingRow[] {
   }
   return out;
 }
+
+// ----------------------------------------------------------------------------
+// Tab 5 — Daily Sales (second spreadsheet, "export" tab)
+// Holds a Customer Code column + a total-actual-sales column. We sum actual
+// sales per Customer Code, then join to the Target tab's `Code` elsewhere.
+// ----------------------------------------------------------------------------
+
+export interface SalesParseResult {
+  /** normalized customer code -> total actual sales */
+  byCode: Record<string, number>;
+  total: number;
+  debug?: {
+    rows: number;
+    headers: string[];
+    codeHeader: string;
+    salesHeader: string;
+    distinctCodes: number;
+  };
+}
+
+/** Normalize a customer/outlet code for joining (trim + lowercase). */
+export function normCode(raw: unknown): string {
+  return String(raw ?? "").trim().toLowerCase();
+}
+
+export function parseSales(csv: string): SalesParseResult {
+  const { data, meta } = Papa.parse<Record<string, string>>(csv, {
+    header: true,
+    skipEmptyLines: "greedy",
+  });
+  const headers = (meta.fields || []).map((h) => String(h));
+
+  // Find the customer-code and total-actual-sales columns flexibly.
+  const findHeader = (...tests: ((h: string) => boolean)[]): string => {
+    for (const test of tests) {
+      const hit = headers.find((h) => test(h.toLowerCase()));
+      if (hit) return hit;
+    }
+    return "";
+  };
+  const codeHeader = findHeader(
+    (h) => h.includes("customer") && h.includes("code"),
+    (h) => h.includes("outlet") && h.includes("code"),
+    (h) => h.includes("code")
+  );
+  const salesHeader = findHeader(
+    (h) => h.includes("total") && h.includes("actual") && h.includes("sale"),
+    (h) => h.includes("total") && h.includes("sale"),
+    (h) => h.includes("actual") && h.includes("sale"),
+    (h) => h.includes("sale")
+  );
+
+  const byCode: Record<string, number> = {};
+  let total = 0;
+  for (const row of data) {
+    if (!row || typeof row !== "object") continue;
+    const code = normCode(row[codeHeader]);
+    const val = num(row[salesHeader]);
+    if (!code || val == null) continue;
+    byCode[code] = (byCode[code] || 0) + val;
+    total += val;
+  }
+
+  return {
+    byCode,
+    total,
+    debug: {
+      rows: data.length,
+      headers,
+      codeHeader,
+      salesHeader,
+      distinctCodes: Object.keys(byCode).length,
+    },
+  };
+}

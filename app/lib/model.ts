@@ -20,7 +20,9 @@ import {
   type TrainingRow,
   type MonthKey,
   type MonthCell,
+  type SalesParseResult,
   normName,
+  normCode,
   UNASSIGNED,
 } from "./parse";
 import { BRANDS } from "./config";
@@ -57,6 +59,13 @@ export interface DashboardModel {
   // ---- precomputed lead indexes (keyed by normName(pa)) ----
   leadByPaMonth: Map<string, Map<MonthKey, number>>;
   leadTotalByPa: Map<string, number>;
+
+  // ---- actual sales (2nd sheet) joined on Code -> Customer Code ----
+  sales: SalesParseResult;
+  salesByPa: Map<string, number>; // normName(pa) -> total actual sales
+  salesByAsm: Map<string, number>; // asm -> total actual sales
+  salesTotal: number; // total sales attributed to a PATL-classified PA
+  salesMatchRate: number; // attributed ÷ all sales (0–1)
 }
 
 function sortedMonths(set: Set<MonthKey>): MonthKey[] {
@@ -70,7 +79,8 @@ export function buildModel(
   daily: DailyLead[],
   target: TargetParseResult,
   nu: NURecord[],
-  training: TrainingRow[]
+  training: TrainingRow[],
+  sales: SalesParseResult
 ): DashboardModel {
   const paToAsm = target.paToAsm;
 
@@ -179,6 +189,21 @@ export function buildModel(
     inner.set(d.month, (inner.get(d.month) || 0) + 1);
   }
 
+  // ---- actual sales join: Target tab `Code` -> sales `Customer Code` ----
+  const salesByPa = new Map<string, number>();
+  const salesByAsm = new Map<string, number>();
+  let salesTotal = 0;
+  for (const r of target.rows) {
+    if (!r.code) continue;
+    const amt = sales.byCode[normCode(r.code)];
+    if (!amt) continue;
+    const paKey = normName(r.paName);
+    salesByPa.set(paKey, (salesByPa.get(paKey) || 0) + amt);
+    salesByAsm.set(r.asm, (salesByAsm.get(r.asm) || 0) + amt);
+    salesTotal += amt;
+  }
+  const salesMatchRate = sales.total ? salesTotal / sales.total : 0;
+
   return {
     daily,
     target,
@@ -194,7 +219,22 @@ export function buildModel(
     nuByPa,
     leadByPaMonth,
     leadTotalByPa,
+    sales,
+    salesByPa,
+    salesByAsm,
+    salesTotal,
+    salesMatchRate,
   };
+}
+
+/** Total actual sales attributed to a PA (via its outlet Code). */
+export function salesForPa(model: DashboardModel, paName: string): number {
+  return model.salesByPa.get(normName(paName)) || 0;
+}
+
+/** Total actual sales attributed to an ASM (Team Leader). */
+export function salesForAsm(model: DashboardModel, asm: string): number {
+  return model.salesByAsm.get(asm) || 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -469,6 +509,25 @@ export function overallAttainmentForMonth(
     actual += leadsForPaMonth(model, p.name, month);
   }
   return target > 0 ? (actual / target) * 100 : null;
+}
+
+/** Overall (all-PA) target-weighted attainment over the given months. */
+export function overallAttainment(
+  model: DashboardModel,
+  months: MonthKey[]
+): number | null {
+  let a = 0;
+  let t = 0;
+  for (const p of model.pas) {
+    for (const m of months) {
+      const tt = tarLeadForPaMonth(model, p.name, m);
+      if (tt > 0) {
+        t += tt;
+        a += leadsForPaMonth(model, p.name, m);
+      }
+    }
+  }
+  return t > 0 ? (a / t) * 100 : null;
 }
 
 /** Total daily leads per month (across everyone). */

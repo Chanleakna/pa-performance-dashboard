@@ -21,8 +21,10 @@ export async function GET(req: NextRequest) {
   const explicitGid = searchParams.get("gid");
 
   let gid: string | null = explicitGid;
-  if (!gid && tab && SHEET_TABS[tab]) {
-    gid = SHEET_TABS[tab].gid;
+  let base: string | undefined;
+  if (tab && SHEET_TABS[tab]) {
+    if (!gid) gid = SHEET_TABS[tab].gid;
+    base = SHEET_TABS[tab].base;
   }
 
   if (!gid) {
@@ -32,7 +34,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const url = csvUrlForGid(gid);
+  const url = csvUrlForGid(gid, base);
 
   try {
     const upstream = await fetch(url, {

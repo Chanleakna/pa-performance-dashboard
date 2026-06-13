@@ -21,8 +21,17 @@ export const SHEET_PUB_BASE =
   process.env.NEXT_PUBLIC_SHEET_PUB_BASE ||
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vRvNutmlfjDp43_K6CAn8N5qJZQBfmvOS-PRhtS4gq9B0pnB21JN8duePeWvWNa5E-9jHuKd0FWu7oY/pub?output=csv";
 
-/** The four tabs we read. `key` is what the client/api use to address a tab. */
-export type SheetKey = "daily" | "target" | "nu" | "training";
+/**
+ * Base of the SECOND spreadsheet — the Daily Sales workbook (its "export" tab
+ * holds Customer Code + total actual sales). Override with
+ * NEXT_PUBLIC_SALES_PUB_BASE.
+ */
+export const SALES_PUB_BASE =
+  process.env.NEXT_PUBLIC_SALES_PUB_BASE ||
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vR2V_bt97RtNN75BmIEPrzsfy48ifx3oIysMB5Pl_F0Jj_6Zwe6OsG6p-oAj0XPseVnVY-k6oC9l98o/pub?output=csv";
+
+/** The tabs we read. `key` is what the client/api use to address a tab. */
+export type SheetKey = "daily" | "target" | "nu" | "training" | "sales";
 
 export interface SheetTabConfig {
   key: SheetKey;
@@ -30,6 +39,8 @@ export interface SheetTabConfig {
   label: string;
   /** Published-to-web gid. Override per env var. */
   gid: string;
+  /** Which spreadsheet this tab lives in (defaults to SHEET_PUB_BASE). */
+  base?: string;
 }
 
 export const SHEET_TABS: Record<SheetKey, SheetTabConfig> = {
@@ -57,6 +68,15 @@ export const SHEET_TABS: Record<SheetKey, SheetTabConfig> = {
     label: "Training Result",
     gid: process.env.NEXT_PUBLIC_SHEET_TRAINING_GID || "1990560513",
   },
+  // Daily Sales — the "export" tab of the SECOND spreadsheet. Holds Customer
+  // Code + total actual sales. NOTE: default gid is a guess (first sheet);
+  // set NEXT_PUBLIC_SALES_GID to the real "export" tab gid.
+  sales: {
+    key: "sales",
+    label: "Daily Sales (export)",
+    gid: process.env.NEXT_PUBLIC_SALES_GID || "0",
+    base: SALES_PUB_BASE,
+  },
 };
 
 /**
@@ -64,9 +84,9 @@ export const SHEET_TABS: Record<SheetKey, SheetTabConfig> = {
  * route so the browser never has to talk to docs.google.com directly (avoids
  * CORS and lets us force `cache: 'no-store'`).
  */
-export function csvUrlForGid(gid: string): string {
-  const sep = SHEET_PUB_BASE.includes("?") ? "&" : "?";
-  return `${SHEET_PUB_BASE}${sep}gid=${encodeURIComponent(gid)}`;
+export function csvUrlForGid(gid: string, base: string = SHEET_PUB_BASE): string {
+  const sep = base.includes("?") ? "&" : "?";
+  return `${base}${sep}gid=${encodeURIComponent(gid)}`;
 }
 
 /**
