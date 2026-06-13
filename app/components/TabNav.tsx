@@ -3,13 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const TABS = [
-  { href: "/", label: "Overview" },
-  { href: "/leaderboard", label: "Leaderboard" },
-  { href: "/asm-teams", label: "ASM Teams" },
-  { href: "/trends", label: "Trends" },
-  { href: "/bi-report", label: "Lead Performance" },
-];
+// Focused on Lead Performance for now; other tabs are temporarily hidden.
+const TABS = [{ href: "/", label: "Lead Performance" }];
 
 export function TabNav() {
   const pathname = usePathname();

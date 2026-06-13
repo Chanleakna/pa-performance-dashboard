@@ -1,7 +1,7 @@
-import { OverviewView } from "./views/OverviewView";
+import { BiReportView } from "./views/BiReportView";
 
 export const dynamic = "force-dynamic";
 
 export default function Page() {
-  return <OverviewView />;
+  return <BiReportView />;
 }

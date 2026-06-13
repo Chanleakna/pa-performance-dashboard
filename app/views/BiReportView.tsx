@@ -3,17 +3,15 @@
 import { useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
-  asmForPa,
   filteredDaily,
   filteredNU,
-  summarizeNU,
+  leadsForPaMonth,
   tarLeadForPaMonth,
   tarLeadForScopeMonth,
   type DashboardModel,
   type Filter,
 } from "../lib/model";
 import { monthLabel, type MonthKey } from "../lib/parse";
-import { BRANDS } from "../lib/config";
 import { fmtInt, fmtPct } from "../lib/format";
 import { DataStatus, LoadingState } from "../components/DataStatus";
 import { AttainmentPill } from "../components/ui";
@@ -21,7 +19,6 @@ import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import {
   GroupedBarChart,
   HorizontalLabeledBar,
-  LabeledBarChart,
   DailyTrendChart,
 } from "../components/charts";
 
@@ -45,18 +42,6 @@ function Panel({
         {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
       </div>
       {children}
-    </div>
-  );
-}
-
-/** A clearly-marked placeholder for data that does NOT exist in these sheets. */
-function PlaceholderPanel({ title }: { title: string }) {
-  return (
-    <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-center">
-      <h3 className="text-sm font-semibold text-slate-500">{title}</h3>
-      <p className="mt-1 text-[11px] text-slate-400">
-        No IMS / Act.Sales data in the source sheets — placeholder.
-      </p>
     </div>
   );
 }
@@ -197,9 +182,19 @@ function HeatMap({
   );
 }
 
-// ---- Target Lead by PA (PA rows × month columns + a Total row) ---------------
+// ---- Attainment % by PA (Actual ÷ Target, amber heatmap, by month) -----------
 
-function TargetByPaTable({
+/** Amber cell background scaled by attainment %. Null target => neutral. */
+function amberStyle(pct: number | null): React.CSSProperties {
+  if (pct == null) return { backgroundColor: "#f1f5f9", color: "#94a3b8" };
+  const intensity = Math.min(pct, 120) / 120; // 0..1, capped so 120%+ is full
+  return {
+    backgroundColor: `rgba(217, 119, 6, ${0.12 + 0.88 * intensity})`,
+    color: intensity > 0.5 ? "#fff" : "#7c2d12",
+  };
+}
+
+function AttainmentHeatmap({
   model,
   pas,
   months,
@@ -208,22 +203,40 @@ function TargetByPaTable({
   pas: { name: string; asm: string }[];
   months: MonthKey[];
 }) {
-  const { rows, colTotals, grand } = useMemo(() => {
+  const { rows, totalsByMonth, grandPct } = useMemo(() => {
     const rows = pas
       .map((p) => {
-        const vals = months.map((m) => tarLeadForPaMonth(model, p.name, m));
-        const total = vals.reduce((a, b) => a + b, 0);
-        return { name: p.name, asm: p.asm, vals, total };
+        const cells = months.map((m) => {
+          const t = tarLeadForPaMonth(model, p.name, m);
+          const a = leadsForPaMonth(model, p.name, m);
+          return { t, a, pct: t > 0 ? (a / t) * 100 : null };
+        });
+        const tTot = cells.reduce((s, c) => s + c.t, 0);
+        const aTot = cells.reduce((s, c) => s + c.a, 0);
+        const pctTot = tTot > 0 ? (aTot / tTot) * 100 : null;
+        return { name: p.name, asm: p.asm, cells, tTot, pctTot };
       })
-      .filter((r) => r.total > 0)
-      .sort((a, b) => b.total - a.total)
+      .filter((r) => r.tTot > 0)
+      .sort((a, b) => b.tTot - a.tTot)
       .slice(0, 150);
 
-    const colTotals = months.map((_, i) =>
-      rows.reduce((a, r) => a + r.vals[i], 0)
-    );
-    const grand = colTotals.reduce((a, b) => a + b, 0);
-    return { rows, colTotals, grand };
+    const totalsByMonth = months.map((_, i) => {
+      let a = 0;
+      let t = 0;
+      for (const r of rows) {
+        a += r.cells[i].a;
+        t += r.cells[i].t;
+      }
+      return { pct: t > 0 ? (a / t) * 100 : null };
+    });
+    let A = 0;
+    let T = 0;
+    for (const r of rows) {
+      A += r.cells.reduce((s, c) => s + c.a, 0);
+      T += r.tTot;
+    }
+    const grandPct = T > 0 ? (A / T) * 100 : null;
+    return { rows, totalsByMonth, grandPct };
   }, [model, pas, months]);
 
   if (months.length === 0)
@@ -233,53 +246,64 @@ function TargetByPaTable({
       </p>
     );
 
-  const cell = "whitespace-nowrap px-1.5 py-1 text-right tabular-nums";
+  const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
   const nameCell =
     "sticky left-0 z-10 max-w-[120px] truncate bg-white px-1.5 py-1 text-left";
+  const show = (pct: number | null) => (pct == null ? "—" : `${Math.round(pct)}%`);
 
   return (
     <div className="no-scrollbar overflow-x-auto">
-      <table className="text-[11px]">
+      <table className="border-separate border-spacing-0.5 text-[11px]">
         <thead>
-          <tr className="border-b border-slate-200 text-slate-400">
+          <tr className="text-slate-400">
             <th className={nameCell + " font-medium"}>PA</th>
             {months.map((m) => (
-              <th key={m} className={cell + " font-medium"}>
+              <th key={m} className={cellCls + " font-medium"}>
                 {monthLabel(m).replace(" 20", " '")}
               </th>
             ))}
-            <th className={cell + " font-semibold text-slate-500"}>Total</th>
+            <th className={cellCls + " font-semibold text-slate-500"}>Total</th>
           </tr>
         </thead>
         <tbody>
-          {/* Accumulated total of all PAs together. */}
-          <tr className="border-b border-slate-200 bg-brand-50 font-semibold text-brand-800">
-            <td className={nameCell + " bg-brand-50"}>Total (all PAs)</td>
-            {colTotals.map((t, i) => (
-              <td key={i} className={cell}>
-                {fmtInt(t)}
+          {/* Accumulated attainment of all PAs together. */}
+          <tr className="font-semibold">
+            <td className={nameCell + " text-amber-800"}>Total (all PAs)</td>
+            {totalsByMonth.map((t, i) => (
+              <td key={i} className={cellCls} style={amberStyle(t.pct)}>
+                {show(t.pct)}
               </td>
             ))}
-            <td className={cell}>{fmtInt(grand)}</td>
+            <td className={cellCls} style={amberStyle(grandPct)}>
+              {show(grandPct)}
+            </td>
           </tr>
           {rows.map((r) => (
-            <tr key={r.name} className="border-b border-slate-50 last:border-0">
+            <tr key={r.name}>
               <td className={nameCell + " text-slate-700"} title={`${r.name} · ${r.asm}`}>
                 {r.name}
               </td>
-              {r.vals.map((v, i) => (
-                <td key={i} className={cell + " text-slate-600"}>
-                  {v > 0 ? fmtInt(v) : "—"}
+              {r.cells.map((c, i) => (
+                <td
+                  key={i}
+                  className={cellCls}
+                  style={amberStyle(c.pct)}
+                  title={`${r.name} · ${monthLabel(months[i])}: ${c.a} / ${c.t}`}
+                >
+                  {show(c.pct)}
                 </td>
               ))}
-              <td className={cell + " font-medium text-slate-800"}>{fmtInt(r.total)}</td>
+              <td className={cellCls + " font-medium"} style={amberStyle(r.pctTot)}>
+                {show(r.pctTot)}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Values are <span className="font-medium">Target Lead</span> (Tar.Lead) per
-        PA per month. The top row accumulates all PAs in scope.
+        Cells = <span className="font-medium">attainment %</span> (daily Actual ÷
+        Tar.Lead) per PA per month, amber-shaded by level. The top row is all PAs
+        combined. Months without a Tar.Lead show &ldquo;—&rdquo;.
       </p>
     </div>
   );
@@ -438,26 +462,6 @@ export function BiReportView() {
     return Array.from(map.values()).sort((a, b) => a.sort.localeCompare(b.sort));
   }, [model, scopedDaily, scopedNU, specificMonth]);
 
-  // by Team Leader
-  const byTeamLeader = useMemo(() => {
-    if (!model) return [];
-    const leadByAsm = new Map<string, number>();
-    for (const d of scopedDaily) {
-      const asm = asmForPa(model, d.paName);
-      leadByAsm.set(asm, (leadByAsm.get(asm) || 0) + 1);
-    }
-    const nuByAsm = new Map<string, number>();
-    for (const r of scopedNU) {
-      // Re-derive the team leader from the Contact-ID name (filteredNU is flat).
-      const asm = asmForPa(model, r.contactId);
-      nuByAsm.set(asm, (nuByAsm.get(asm) || 0) + 1);
-    }
-    const keys = new Set<string>([...leadByAsm.keys(), ...nuByAsm.keys()]);
-    return Array.from(keys)
-      .map((asm) => ({ asm, Leads: leadByAsm.get(asm) || 0, NU: nuByAsm.get(asm) || 0 }))
-      .sort((a, b) => b.Leads - a.Leads);
-  }, [model, scopedDaily, scopedNU]);
-
   const byProduct = useMemo(() => {
     const m = new Map<string, number>();
     for (const d of scopedDaily) {
@@ -481,8 +485,6 @@ export function BiReportView() {
       .sort((a, b) => b.leads - a.leads)
       .slice(0, 15);
   }, [scopedDaily]);
-
-  const nuSummary = useMemo(() => summarizeNU(scopedNU), [scopedNU]);
 
   if (!model) return <LoadingState />;
 
@@ -523,7 +525,7 @@ export function BiReportView() {
       />
 
       {/* KPI strip */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mb-3 grid grid-cols-3 gap-2">
         <KpiTile label="Leads" value={fmtInt(scopedDaily.length)} />
         <KpiTile
           label="Attainment"
@@ -538,7 +540,6 @@ export function BiReportView() {
               : pasForAsmsFn(slicer.asms).length
           )}
         />
-        <PlaceholderPanel title="Total IMS" />
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -577,11 +578,11 @@ export function BiReportView() {
       </div>
 
       <Panel
-        title="Target Lead by PA"
-        hint="Tar.Lead · PA × month + Total"
+        title="Attainment % by PA"
+        hint="Actual ÷ Target · by month · amber"
         className="mt-3"
       >
-        <TargetByPaTable model={model} pas={scopePas} months={targetTableMonths} />
+        <AttainmentHeatmap model={model} pas={scopePas} months={targetTableMonths} />
       </Panel>
 
       <Panel
@@ -591,29 +592,6 @@ export function BiReportView() {
       >
         <HeatMap model={model} filter={filter} summaryMonths={summaryMonths} />
       </Panel>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel title="Lead & NU by Team Leader">
-          <GroupedBarChart
-            data={byTeamLeader}
-            xKey="asm"
-            series={[
-              { key: "Leads", name: "Leads", color: "#2563eb" },
-              { key: "NU", name: "New Users", color: "#14b8a6" },
-            ]}
-          />
-        </Panel>
-
-        <Panel title="New Users by Brand">
-          <LabeledBarChart
-            data={BRANDS.map((b) => ({ brand: b, nu: nuSummary.byBrand[b] || 0 }))}
-            dataKey="nu"
-            xKey="brand"
-            color="#0ea5e9"
-            valueFormatter={(v) => fmtInt(v)}
-          />
-        </Panel>
-      </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Panel title="Leads by Product" hint="from daily Product column">
@@ -635,19 +613,6 @@ export function BiReportView() {
             valueFormatter={(v) => fmtInt(v)}
           />
         </Panel>
-      </div>
-
-      {/* IMS / Act.Sales placeholders — these metrics do NOT exist in source */}
-      <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-500">
-        IMS / Act.Sales (not in source data)
-      </h3>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <PlaceholderPanel title="Act.Sales / Lead" />
-        <PlaceholderPanel title="Act.Sales / PA" />
-        <PlaceholderPanel title="IMS by Product" />
-        <PlaceholderPanel title="IMS / Lead" />
-        <PlaceholderPanel title="IMS by Customer" />
-        <PlaceholderPanel title="Total IMS" />
       </div>
 
       <p className="mt-4 text-[11px] text-slate-400">
