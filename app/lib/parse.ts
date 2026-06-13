@@ -240,6 +240,9 @@ export interface TargetParseResult {
     headerMonthsSample: string[];
     headerSubsSample: string[];
     sampleDataRow: string[];
+    combinedHeaderSample: string[];
+    headerRowCount: number;
+    dataStartRow: number;
     mappedCols: number;
     tarLeadCols: number;
   };
@@ -278,8 +281,7 @@ export function parseTargetActual(csv: string): TargetParseResult {
     }
   }
   const headerMonths = rows2d[monthRowIdx]; // merged month dates (sparse)
-  const headerSubs = rows2d[monthRowIdx + 1] || []; // repeating sub-headers
-  const bodyRows = rows2d.slice(monthRowIdx + 2);
+  const width = rows2d.reduce((w, r) => Math.max(w, r.length), 0);
 
   // Month blocks start at the first column of the month row that holds a date
   // (the identity columns sit to its left). Fall back to the documented 6.
@@ -288,7 +290,46 @@ export function parseTargetActual(csv: string): TargetParseResult {
   );
   if (monthStart < 0) monthStart = 6;
 
-  // Build a column map by scanning sub-headers under the forward-filled month.
+  // Where does the DATA begin? Header rows are label rows; a data row has
+  // several numeric cells in the month region. Walk down until we hit one.
+  const numericCountInMonthRegion = (row: string[]): number => {
+    let n = 0;
+    for (let c = monthStart; c < width; c++) if (num(row[c]) !== null) n++;
+    return n;
+  };
+  let dataStart = monthRowIdx + 1;
+  while (
+    dataStart < rows2d.length &&
+    numericCountInMonthRegion(rows2d[dataStart]) < 2
+  ) {
+    dataStart++;
+  }
+  if (dataStart >= rows2d.length) dataStart = monthRowIdx + 2; // safety
+
+  // All header rows (could be 1, 2, or 3: month / group / metric), each
+  // forward-filled across the month region to spread merged labels.
+  const headerRows = rows2d.slice(monthRowIdx, dataStart);
+  const filled = headerRows.map((row) => {
+    const out: string[] = [];
+    let last = "";
+    for (let c = 0; c < width; c++) {
+      const v = String(row[c] ?? "").trim();
+      if (c < monthStart) {
+        out[c] = v;
+        last = "";
+        continue;
+      }
+      if (v) last = v;
+      out[c] = last; // forward-fill merged cells within the month region
+    }
+    return out;
+  });
+  const headerSubs = headerRows[headerRows.length - 1] || []; // for diagnostics
+  const bodyRows = rows2d.slice(dataStart);
+
+  // Column map: month forward-filled from the date row; the metric field read
+  // from the COMBINED text of every header row (handles "Lead"+"Tar" split
+  // across two label rows, or a single combined "Jan-26 Tar.Lead" cell).
   interface ColMap {
     col: number;
     month: MonthKey;
@@ -298,9 +339,8 @@ export function parseTargetActual(csv: string): TargetParseResult {
   const monthOrder: MonthKey[] = [];
   let currentMonth: MonthKey | null = null;
 
-  const width = Math.max(headerMonths.length, headerSubs.length);
   for (let c = monthStart; c < width; c++) {
-    const monthCellRaw = (headerMonths[c] ?? "").trim();
+    const monthCellRaw = String(headerMonths[c] ?? "").trim();
     if (monthCellRaw) {
       const mk = monthKeyFromHeaderCell(monthCellRaw);
       if (mk) {
@@ -308,7 +348,8 @@ export function parseTargetActual(csv: string): TargetParseResult {
         if (!monthOrder.includes(mk)) monthOrder.push(mk);
       }
     }
-    const field = classifySubHeader((headerSubs[c] ?? "").trim());
+    const combined = filled.map((f) => f[c]).join(" ");
+    const field = classifySubHeader(combined);
     if (currentMonth && field) {
       colMaps.push({ col: c, month: currentMonth, field });
     }
@@ -361,6 +402,13 @@ export function parseTargetActual(csv: string): TargetParseResult {
       headerMonthsSample: headerMonths.slice(0, 18).map((c) => String(c ?? "")),
       headerSubsSample: headerSubs.slice(0, 18).map((c) => String(c ?? "")),
       sampleDataRow: (bodyRows[0] ?? []).slice(0, 18).map((c) => String(c ?? "")),
+      combinedHeaderSample: filled.length
+        ? Array.from({ length: Math.min(18, width) }, (_, c) =>
+            filled.map((f) => f[c]).join("|")
+          ).slice(monthStart, monthStart + 12)
+        : [],
+      headerRowCount: headerRows.length,
+      dataStartRow: dataStart,
       mappedCols: colMaps.length,
       tarLeadCols: colMaps.filter((c) => c.field === "tarLead").length,
     },

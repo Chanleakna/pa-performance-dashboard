@@ -711,10 +711,24 @@ function Diagnostics({ model, open = false }: { model: DashboardModel; open?: bo
               </span>
             </div>
             <div className={line}>
+              <span>Header rows / data starts at row</span>
+              <span className="tabular-nums">
+                {d.headerRowCount} / {d.dataStartRow}
+              </span>
+            </div>
+            <div className={line}>
               <span>Mapped cols / of which Tar.Lead</span>
               <span className="tabular-nums">
                 {d.mappedCols} / {d.tarLeadCols}
               </span>
+            </div>
+            <div className="pt-1">
+              <div className="font-medium text-slate-500">
+                Combined header per month-column:
+              </div>
+              <div className="break-all font-mono text-[10px]">
+                [{d.combinedHeaderSample.map((c) => `"${c}"`).join(", ")}]
+              </div>
             </div>
             <div className="pt-1">
               <div className="font-medium text-slate-500">Detected month row:</div>
