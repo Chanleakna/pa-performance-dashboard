@@ -7,7 +7,8 @@ import {
   leadsForPa,
   leadsForPaMonth,
   salesForPa,
-  tarLeadForPaMonth,
+  salesTargetForPa,
+  targetLeadForPaMonth,
 } from "../lib/model";
 import { type MonthKey } from "../lib/parse";
 import { fmtInt, fmtPct, fmtCompact } from "../lib/format";
@@ -61,22 +62,26 @@ interface OvRow {
   name: string;
   asm: string;
   leads: number;
+  leadTar: number;
+  leadPct: number | null;
   nu: number;
   attainment: number | null;
   sales: number;
+  salesTar: number;
+  salesPct: number | null;
 }
 
-function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
-  return (
-    <div className="rounded-lg bg-brand-600 p-2.5 text-white">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-brand-100">
-        {label}
-      </div>
-      <div className="text-lg font-bold tabular-nums leading-tight">{value}</div>
-      {sub && <div className="text-[10px] text-brand-100">{sub}</div>}
-    </div>
-  );
+/** Green/red % cell style (≥100 green, <100 red), shaded by distance. */
+function pctStyle(pct: number | null): React.CSSProperties {
+  if (pct == null) return { backgroundColor: "#f1f5f9", color: "#94a3b8" };
+  if (pct >= 100) {
+    const i = Math.min((pct - 100) / 100, 1);
+    return { backgroundColor: `rgba(22,163,74,${0.2 + 0.6 * i})`, color: i > 0.45 ? "#fff" : "#14532d" };
+  }
+  const i = Math.min((100 - pct) / 100, 1);
+  return { backgroundColor: `rgba(220,38,38,${0.18 + 0.62 * i})`, color: i > 0.5 ? "#fff" : "#7f1d1d" };
 }
+const pctTxt = (p: number | null) => (p == null ? "—" : `${Math.round(p)}%`);
 
 type PaSort = "sales" | "leads" | "nu" | "attainment" | "name";
 
@@ -144,20 +149,31 @@ export function OverviewView() {
     const attMonths = (monthScope ?? model.attainmentMonths).filter((m) =>
       model.attainmentMonths.includes(m)
     );
+    const tgtMonths = monthScope ?? model.targetMonths;
     return scopePas.map((p) => {
       const leads = monthScope
         ? monthScope.reduce((s, m) => s + leadsForPaMonth(model, p.name, m), 0)
         : leadsForPa(model, p.name);
+      const leadTar = tgtMonths.reduce(
+        (s, m) => s + targetLeadForPaMonth(model, p.name, m),
+        0
+      );
       const nu = (model.nuByPa[p.name] || []).filter(
         (r) => !monthScope || monthScope.includes(r.month)
       ).length;
+      const sales = salesForPa(model, p.name, monthScope);
+      const salesTar = salesTargetForPa(model, p.name, monthScope);
       return {
         name: p.name,
         asm: p.asm,
         leads,
+        leadTar,
+        leadPct: leadTar > 0 ? (leads / leadTar) * 100 : null,
         nu,
         attainment: attainmentOverMonths(model, p.name, attMonths),
-        sales: salesForPa(model, p.name, monthScope),
+        sales,
+        salesTar,
+        salesPct: salesTar > 0 ? (sales / salesTar) * 100 : null,
       };
     });
   }, [model, slicer.pas, slicer.asms, monthScope]);
@@ -210,19 +226,13 @@ export function OverviewView() {
     });
   }, [rows, q, sortKey, asc]);
 
-  // Heatmap rows (PA | Act.Sale | Act.Lead), sorted by sales.
-  const heatRows = useMemo(() => {
-    const r = [...rows].sort((a, b) => b.sales - a.sales).slice(0, 150);
-    const maxSales = r.reduce((m, x) => Math.max(m, x.sales), 1);
-    const maxLeads = r.reduce((m, x) => Math.max(m, x.leads), 1);
-    return { r, maxSales, maxLeads };
-  }, [rows]);
+  // Heatmap rows, sorted by sales then leads.
+  const heatList = useMemo(
+    () => [...rows].sort((a, b) => b.sales - a.sales || b.leads - a.leads).slice(0, 150),
+    [rows]
+  );
 
   if (!model) return <LoadingState />;
-
-  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
-  const totalLeads = rows.reduce((s, r) => s + r.leads, 0);
-  const totalNu = rows.reduce((s, r) => s + r.nu, 0);
 
   const setSort = (k: PaSort) => {
     if (k === sortKey) setAsc((v) => !v);
@@ -244,20 +254,7 @@ export function OverviewView() {
     </th>
   );
 
-  const teal = (v: number, max: number) => {
-    const i = v <= 0 ? 0 : 0.12 + 0.7 * (v / max);
-    return {
-      backgroundColor: v <= 0 ? "#f8fafc" : `rgba(13, 148, 136, ${i})`,
-      color: i > 0.5 ? "#fff" : "#134e4a",
-    };
-  };
-  const blue = (v: number, max: number) => {
-    const i = v <= 0 ? 0 : 0.12 + 0.7 * (v / max);
-    return {
-      backgroundColor: v <= 0 ? "#f8fafc" : `rgba(37, 99, 235, ${i})`,
-      color: i > 0.5 ? "#fff" : "#1e3a8a",
-    };
-  };
+  const numCell = "whitespace-nowrap px-1.5 py-1 text-right tabular-nums";
 
   return (
     <div>
@@ -272,18 +269,6 @@ export function OverviewView() {
         pasForAsms={pasForAsmsFn}
       />
 
-      {/* KPI strip */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <KpiTile
-          label="Actual Sales"
-          value={fmtCompact(totalSales)}
-          sub={monthScope ? "selected months" : "all months"}
-        />
-        <KpiTile label="Leads" value={fmtInt(totalLeads)} />
-        <KpiTile label="New Users" value={fmtInt(totalNu)} />
-        <KpiTile label="PAs" value={fmtInt(rows.length)} />
-      </div>
-
       {model.salesTotal === 0 && (
         <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
           No actual sales matched. Check the Daily Sales{" "}
@@ -292,52 +277,58 @@ export function OverviewView() {
         </div>
       )}
 
-      {/* PA | Act.Sale | Act.Lead heatmap */}
+      {/* PA · Lead (Act/Tar/%) · Sales (Act/Tar/%) heatmap */}
       <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
         <PanelHead
-          title="PA · Actual Sales · Actual Lead"
-          hint="heatmap"
-          exportName="pa-sales-leads"
+          title="PA · Lead & Sales vs Target"
+          hint="Act / Tar / % · green = achieved"
+          exportName="pa-lead-sales-vs-target"
           exportRows={() =>
-            heatRows.r.map((p) => ({
+            heatList.map((p) => ({
               PA: p.name,
               "Team Leader": p.asm,
-              "Actual Sales": Math.round(p.sales),
-              "Actual Lead": p.leads,
+              "Lead Act": p.leads,
+              "Lead Tar": p.leadTar,
+              "Lead %": p.leadPct == null ? "" : Math.round(p.leadPct),
+              "Sales Act": Math.round(p.sales),
+              "Sales Tar": Math.round(p.salesTar),
+              "Sales %": p.salesPct == null ? "" : Math.round(p.salesPct),
             }))
           }
         />
         <div className="no-scrollbar overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="border-separate border-spacing-0.5 text-xs">
             <thead>
               <tr className="text-slate-400">
                 <th className="sticky left-0 z-10 bg-white px-1.5 py-1 text-left font-medium">
                   PA Name
                 </th>
-                <th className="px-1.5 py-1 text-right font-medium">Act. Sale</th>
-                <th className="px-1.5 py-1 text-right font-medium">Act. Lead</th>
+                <th className={numCell + " font-medium text-brand-600"} colSpan={3}>
+                  Lead (Act / Tar / %)
+                </th>
+                <th className={numCell + " font-medium text-teal-700"} colSpan={3}>
+                  Sales (Act / Tar / %)
+                </th>
               </tr>
             </thead>
             <tbody>
-              {heatRows.r.map((p) => (
+              {heatList.map((p) => (
                 <tr key={p.name}>
                   <td
-                    className="sticky left-0 z-10 max-w-[150px] truncate bg-white px-1.5 py-1 text-slate-700"
+                    className="sticky left-0 z-10 max-w-[140px] truncate bg-white px-1.5 py-1 text-slate-700"
                     title={`${p.name} · ${p.asm}`}
                   >
                     {p.name}
                   </td>
-                  <td
-                    className="rounded px-1.5 py-1 text-right tabular-nums"
-                    style={teal(p.sales, heatRows.maxSales)}
-                  >
-                    {fmtInt(p.sales)}
+                  <td className={numCell + " text-slate-700"}>{fmtInt(p.leads)}</td>
+                  <td className={numCell + " text-slate-400"}>{fmtInt(p.leadTar)}</td>
+                  <td className={numCell + " rounded font-semibold"} style={pctStyle(p.leadPct)}>
+                    {pctTxt(p.leadPct)}
                   </td>
-                  <td
-                    className="rounded px-1.5 py-1 text-right tabular-nums"
-                    style={blue(p.leads, heatRows.maxLeads)}
-                  >
-                    {fmtInt(p.leads)}
+                  <td className={numCell + " text-slate-700"}>{fmtCompact(p.sales)}</td>
+                  <td className={numCell + " text-slate-400"}>{fmtCompact(p.salesTar)}</td>
+                  <td className={numCell + " rounded font-semibold"} style={pctStyle(p.salesPct)}>
+                    {pctTxt(p.salesPct)}
                   </td>
                 </tr>
               ))}
@@ -345,8 +336,11 @@ export function OverviewView() {
           </table>
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
-          Teal = actual sales, blue = actual leads — both for the selected
-          Year/Month (and PATL/PA). Top 150 PAs by sales.
+          Lead Act = daily leads, Lead Tar = Tar.Lead; Sales Act = actual sales,
+          Sales Tar = target (joined by Code). % cells:{" "}
+          <span className="font-medium text-emerald-700">green</span> ≥100%,{" "}
+          <span className="font-medium text-red-700">red</span> below — for the
+          selected Year/Month. Top 150 PAs by sales.
         </p>
       </div>
 
@@ -495,6 +489,48 @@ export function OverviewView() {
             <div className="font-medium text-slate-500">Sales headers detected:</div>
             <div className="break-all font-mono text-[10px]">
               [{(model.sales.debug?.headers || []).map((h) => `"${h}"`).join(", ")}]
+            </div>
+          </div>
+
+          <div className="mt-2 border-t border-slate-200 pt-2 font-medium text-slate-500">
+            Sales TARGET
+          </div>
+          <div className="flex justify-between border-b border-slate-100 py-0.5">
+            <span>Target rows / distinct codes / month cols</span>
+            <span className="tabular-nums">
+              {model.salesTarget.debug?.rows ?? 0} /{" "}
+              {model.salesTarget.debug?.distinctCodes ?? 0} /{" "}
+              {model.salesTarget.debug?.monthCols ?? 0}
+            </span>
+          </div>
+          <div className="flex justify-between border-b border-slate-100 py-0.5">
+            <span>Target total / matched to a PA</span>
+            <span className="tabular-nums">
+              {fmtInt(model.salesTarget.total)} / {fmtInt(model.salesTargetTotal)} (
+              {fmtPct(model.salesTargetMatchRate * 100)})
+            </span>
+          </div>
+          <div className="flex justify-between border-b border-slate-100 py-0.5">
+            <span>Target months detected</span>
+            <span className="text-right">
+              {model.salesTarget.months.join(", ") || "(none)"}
+            </span>
+          </div>
+          <div className="pt-1">
+            <div className="font-medium text-slate-500">Target header row:</div>
+            <div className="break-all font-mono text-[10px]">
+              [{(model.salesTarget.debug?.headerSample || []).map((h) => `"${h}"`).join(", ")}]
+            </div>
+          </div>
+          <div className="pt-1">
+            <div className="font-medium text-slate-500">
+              Sample (first 4 in view): PA = sales / lead
+            </div>
+            <div className="break-all font-mono text-[10px]">
+              {heatList
+                .slice(0, 4)
+                .map((p) => `${p.name}=${Math.round(p.sales)}/${p.leads}`)
+                .join("  ·  ") || "(none)"}
             </div>
           </div>
         </div>

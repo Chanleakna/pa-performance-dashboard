@@ -30,8 +30,23 @@ export const SALES_PUB_BASE =
   process.env.NEXT_PUBLIC_SALES_PUB_BASE ||
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vR2V_bt97RtNN75BmIEPrzsfy48ifx3oIysMB5Pl_F0Jj_6Zwe6OsG6p-oAj0XPseVnVY-k6oC9l98o/pub?output=csv";
 
+/**
+ * Base of the THIRD spreadsheet — Total Trade Investment, "Only Target" tab:
+ * the sales TARGET per Customer Code per month. Override with
+ * NEXT_PUBLIC_SALES_TARGET_PUB_BASE.
+ */
+export const SALES_TARGET_PUB_BASE =
+  process.env.NEXT_PUBLIC_SALES_TARGET_PUB_BASE ||
+  "https://docs.google.com/spreadsheets/d/e/2PACX-1vQFKgLVfhDBzGz2TBUqC3ZuO91mt0Nbromj9-kfDiuGpxL3lJHgX7xwax1KlxK8HyjMuW0WtneioUqX/pub?output=csv";
+
 /** The tabs we read. `key` is what the client/api use to address a tab. */
-export type SheetKey = "daily" | "target" | "nu" | "training" | "sales";
+export type SheetKey =
+  | "daily"
+  | "target"
+  | "nu"
+  | "training"
+  | "sales"
+  | "salesTarget";
 
 export interface SheetTabConfig {
   key: SheetKey;
@@ -76,6 +91,14 @@ export const SHEET_TABS: Record<SheetKey, SheetTabConfig> = {
     label: "Daily Sales (export)",
     gid: process.env.NEXT_PUBLIC_SALES_GID || "0",
     base: SALES_PUB_BASE,
+  },
+  // Sales Target — the "Only Target" tab of the Total Trade Investment book.
+  // Wide cross-tab: Cust Code + monthly sales targets. gid 897956136.
+  salesTarget: {
+    key: "salesTarget",
+    label: "Sales Target (Only Target)",
+    gid: process.env.NEXT_PUBLIC_SALES_TARGET_GID || "897956136",
+    base: SALES_TARGET_PUB_BASE,
   },
 };
 

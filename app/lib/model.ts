@@ -21,6 +21,7 @@ import {
   type MonthKey,
   type MonthCell,
   type SalesParseResult,
+  type SalesTargetParseResult,
   normName,
   normCode,
   UNASSIGNED,
@@ -67,6 +68,13 @@ export interface DashboardModel {
   salesByPaMonth: Map<string, Map<MonthKey, number>>; // pa -> month -> sales
   salesTotal: number; // total sales attributed to a PATL-classified PA
   salesMatchRate: number; // attributed ÷ all sales (0–1)
+
+  // ---- sales TARGET (3rd sheet) joined on Code -> Cust Code ----
+  salesTarget: SalesTargetParseResult;
+  salesTargetByPaMonth: Map<string, Map<MonthKey, number>>;
+  salesTargetByPa: Map<string, number>;
+  salesTargetTotal: number;
+  salesTargetMatchRate: number;
 }
 
 function sortedMonths(set: Set<MonthKey>): MonthKey[] {
@@ -81,7 +89,8 @@ export function buildModel(
   target: TargetParseResult,
   nu: NURecord[],
   training: TrainingRow[],
-  sales: SalesParseResult
+  sales: SalesParseResult,
+  salesTarget: SalesTargetParseResult
 ): DashboardModel {
   const paToAsm = target.paToAsm;
 
@@ -219,6 +228,34 @@ export function buildModel(
   }
   const salesMatchRate = sales.total ? salesTotal / sales.total : 0;
 
+  // ---- sales TARGET join: Target tab `Code` -> Cust Code ----
+  const salesTargetByPa = new Map<string, number>();
+  const salesTargetByPaMonth = new Map<string, Map<MonthKey, number>>();
+  let salesTargetTotal = 0;
+  for (const r of target.rows) {
+    if (!r.code) continue;
+    const code = normCode(r.code);
+    const tot = salesTarget.byCode[code];
+    if (!tot) continue;
+    const paKey = normName(r.paName);
+    salesTargetByPa.set(paKey, (salesTargetByPa.get(paKey) || 0) + tot);
+    salesTargetTotal += tot;
+    const perMonth = salesTarget.byCodeMonth[code];
+    if (perMonth) {
+      let inner = salesTargetByPaMonth.get(paKey);
+      if (!inner) {
+        inner = new Map();
+        salesTargetByPaMonth.set(paKey, inner);
+      }
+      for (const [mk, v] of Object.entries(perMonth)) {
+        inner.set(mk, (inner.get(mk) || 0) + v);
+      }
+    }
+  }
+  const salesTargetMatchRate = salesTarget.total
+    ? salesTargetTotal / salesTarget.total
+    : 0;
+
   return {
     daily,
     target,
@@ -240,7 +277,27 @@ export function buildModel(
     salesByPaMonth,
     salesTotal,
     salesMatchRate,
+    salesTarget,
+    salesTargetByPaMonth,
+    salesTargetByPa,
+    salesTargetTotal,
+    salesTargetMatchRate,
   };
+}
+
+/** Total sales target for a PA (via its outlet Code), optionally month-scoped. */
+export function salesTargetForPa(
+  model: DashboardModel,
+  paName: string,
+  monthScope?: MonthKey[] | null
+): number {
+  const key = normName(paName);
+  if (!monthScope) return model.salesTargetByPa.get(key) || 0;
+  const inner = model.salesTargetByPaMonth.get(key);
+  if (!inner) return 0;
+  let s = 0;
+  for (const m of monthScope) s += inner.get(m) || 0;
+  return s;
 }
 
 /**

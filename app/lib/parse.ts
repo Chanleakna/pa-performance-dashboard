@@ -683,3 +683,106 @@ export function parseSales(csv: string): SalesParseResult {
     },
   };
 }
+
+// ----------------------------------------------------------------------------
+// Tab 6 — Sales Target ("Only Target" tab of the Total Trade Investment book)
+// Wide cross-tab: ID columns (No, Cust Code, Customer Name, Type, …) then one
+// column per month (Jan-26 … Dec-26) + Total. Title/legend rows sit on top.
+// ----------------------------------------------------------------------------
+
+export interface SalesTargetParseResult {
+  /** normalized customer code -> { monthKey -> sales target } */
+  byCodeMonth: Record<string, Record<MonthKey, number>>;
+  /** normalized customer code -> total sales target (across the month cols) */
+  byCode: Record<string, number>;
+  months: MonthKey[];
+  total: number;
+  debug?: {
+    rows: number;
+    headerRowIdx: number;
+    codeCol: number;
+    monthCols: number;
+    distinctCodes: number;
+    headerSample: string[];
+  };
+}
+
+export function parseSalesTarget(csv: string): SalesTargetParseResult {
+  const { data } = Papa.parse<string[]>(csv, {
+    header: false,
+    skipEmptyLines: false,
+  });
+  const rows2d = (data as string[][]).filter(Array.isArray);
+  const empty: SalesTargetParseResult = {
+    byCodeMonth: {},
+    byCode: {},
+    months: [],
+    total: 0,
+  };
+  if (rows2d.length < 2) return empty;
+
+  const looksLikeMonth = (raw: string) => monthKeyFromHeaderCell(raw) != null;
+
+  // Header row = the one (within the first ~8) with the most month-like cells.
+  let headerRowIdx = 0;
+  let best = -1;
+  for (let i = 0; i < Math.min(8, rows2d.length - 1); i++) {
+    const c = rows2d[i].reduce(
+      (acc, cell) => acc + (looksLikeMonth(String(cell ?? "").trim()) ? 1 : 0),
+      0
+    );
+    if (c > best) {
+      best = c;
+      headerRowIdx = i;
+    }
+  }
+  const header = rows2d[headerRowIdx];
+  const width = rows2d.reduce((w, r) => Math.max(w, r.length), 0);
+
+  // Customer code column (NOT material/other code) + month columns.
+  let codeCol = header.findIndex((h) => {
+    const s = String(h ?? "").toLowerCase();
+    return s.includes("cust") && s.includes("cod");
+  });
+  if (codeCol < 0)
+    codeCol = header.findIndex((h) => String(h ?? "").toLowerCase().includes("code"));
+  if (codeCol < 0) codeCol = 1;
+
+  const monthCols: { col: number; mk: MonthKey }[] = [];
+  for (let c = 0; c < width; c++) {
+    const mk = monthKeyFromHeaderCell(String(header[c] ?? "").trim());
+    if (mk) monthCols.push({ col: c, mk });
+  }
+
+  const byCodeMonth: Record<string, Record<MonthKey, number>> = {};
+  const byCode: Record<string, number> = {};
+  const monthsSet = new Set<MonthKey>();
+  let total = 0;
+  for (const r of rows2d.slice(headerRowIdx + 1)) {
+    const code = normCode(r[codeCol]);
+    if (!code) continue;
+    for (const mc of monthCols) {
+      const v = num(r[mc.col]);
+      if (v == null) continue;
+      (byCodeMonth[code] ||= {})[mc.mk] = (byCodeMonth[code][mc.mk] || 0) + v;
+      byCode[code] = (byCode[code] || 0) + v;
+      total += v;
+      monthsSet.add(mc.mk);
+    }
+  }
+
+  return {
+    byCodeMonth,
+    byCode,
+    months: Array.from(monthsSet).sort(),
+    total,
+    debug: {
+      rows: rows2d.length,
+      headerRowIdx,
+      codeCol,
+      monthCols: monthCols.length,
+      distinctCodes: Object.keys(byCode).length,
+      headerSample: header.slice(0, 20).map((c) => String(c ?? "")),
+    },
+  };
+}

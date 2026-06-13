@@ -9,6 +9,7 @@ const TAB_LABELS: Record<string, string> = {
   nu: SHEET_TABS.nu.label,
   training: SHEET_TABS.training.label,
   sales: SHEET_TABS.sales.label,
+  salesTarget: SHEET_TABS.salesTarget.label,
 };
 
 /**

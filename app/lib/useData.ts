@@ -15,6 +15,7 @@ import {
   parseFinalNU,
   parseTraining,
   parseSales,
+  parseSalesTarget,
 } from "./parse";
 import { buildModel, type DashboardModel } from "./model";
 
@@ -44,7 +45,9 @@ export interface UseDataResult {
   model: DashboardModel | null;
   isLoading: boolean;
   /** Per-tab errors, keyed by tab. Tells the user which tab to publish. */
-  errors: Partial<Record<"daily" | "target" | "nu" | "training" | "sales", string>>;
+  errors: Partial<
+    Record<"daily" | "target" | "nu" | "training" | "sales" | "salesTarget", string>
+  >;
   /** Last successful refresh time (client clock). */
   updatedAt: Date | null;
   refresh: () => void;
@@ -56,9 +59,17 @@ export function useDashboardData(): UseDataResult {
   const nu = useSWR("/api/sheet?tab=nu", fetchCsv, swrOpts);
   const training = useSWR("/api/sheet?tab=training", fetchCsv, swrOpts);
   const sales = useSWR("/api/sheet?tab=sales", fetchCsv, swrOpts);
+  const salesTarget = useSWR("/api/sheet?tab=salesTarget", fetchCsv, swrOpts);
 
   const model = useMemo<DashboardModel | null>(() => {
-    if (!daily.data && !target.data && !nu.data && !training.data && !sales.data)
+    if (
+      !daily.data &&
+      !target.data &&
+      !nu.data &&
+      !training.data &&
+      !sales.data &&
+      !salesTarget.data
+    )
       return null;
     try {
       return buildModel(
@@ -70,14 +81,17 @@ export function useDashboardData(): UseDataResult {
         training.data ? parseTraining(training.data) : [],
         sales.data
           ? parseSales(sales.data)
-          : { byCode: {}, byCodeMonth: {}, total: 0, months: [] }
+          : { byCode: {}, byCodeMonth: {}, total: 0, months: [] },
+        salesTarget.data
+          ? parseSalesTarget(salesTarget.data)
+          : { byCodeMonth: {}, byCode: {}, months: [], total: 0 }
       );
     } catch (e) {
       // A parse failure shouldn't blank the whole page; surface via errors.
       console.error("Model build failed", e);
       return null;
     }
-  }, [daily.data, target.data, nu.data, training.data, sales.data]);
+  }, [daily.data, target.data, nu.data, training.data, sales.data, salesTarget.data]);
 
   const errors: UseDataResult["errors"] = {};
   if (daily.error) errors.daily = String(daily.error.message || daily.error);
@@ -86,13 +100,16 @@ export function useDashboardData(): UseDataResult {
   if (training.error)
     errors.training = String(training.error.message || training.error);
   if (sales.error) errors.sales = String(sales.error.message || sales.error);
+  if (salesTarget.error)
+    errors.salesTarget = String(salesTarget.error.message || salesTarget.error);
 
   const isLoading =
     (daily.isLoading ||
       target.isLoading ||
       nu.isLoading ||
       training.isLoading ||
-      sales.isLoading) &&
+      sales.isLoading ||
+      salesTarget.isLoading) &&
     !model;
 
   const refresh = () => {
@@ -101,6 +118,7 @@ export function useDashboardData(): UseDataResult {
     nu.mutate();
     training.mutate();
     sales.mutate();
+    salesTarget.mutate();
   };
 
   return {
