@@ -8,6 +8,7 @@ import {
   leadsForPaMonth,
   salesForPa,
   salesTargetForPa,
+  tarLeadForPaMonth,
   targetLeadForPaMonth,
 } from "../lib/model";
 import { type MonthKey } from "../lib/parse";
