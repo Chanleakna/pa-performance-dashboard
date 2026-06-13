@@ -58,8 +58,10 @@ export interface DashboardModel {
   nuByPa: Record<string, NURecord[]>; // key = PA name, plus UNASSIGNED bucket
 
   // ---- precomputed lead indexes (keyed by normName(pa)) ----
-  leadByPaMonth: Map<string, Map<MonthKey, number>>;
+  leadByPaMonth: Map<string, Map<MonthKey, number>>; // daily row counts
   leadTotalByPa: Map<string, number>;
+  actLeadByPaMonth: Map<string, Map<MonthKey, number>>; // Target tab Act.Lead
+  actLeadTotalByPa: Map<string, number>;
 
   /** normName(pa) -> distinct store/outlet names (from the Target tab). */
   storesByPa: Map<string, string[]>;
@@ -153,17 +155,17 @@ export function buildModel(
   const dailyMonths = sortedMonths(new Set(daily.map((d) => d.month)));
   const targetMonths = target.months.slice();
 
-  // Attainment months: target month with total Tar.Lead > 0 AND daily leads > 0.
-  const dailyCountByMonth = new Map<MonthKey, number>();
-  for (const d of daily) {
-    if (!d.month) continue;
-    dailyCountByMonth.set(d.month, (dailyCountByMonth.get(d.month) || 0) + 1);
-  }
+  // Attainment months: target month with total Tar.Lead > 0 AND Act.Lead > 0
+  // (actuals come from the Target tab's Act.Lead, not the daily row count).
   const tarLeadByMonth = new Map<MonthKey, number>();
+  const actLeadByMonth = new Map<MonthKey, number>();
   for (const r of target.rows) {
     for (const [mk, cell] of Object.entries(r.months)) {
       if (cell.tarLead != null) {
         tarLeadByMonth.set(mk, (tarLeadByMonth.get(mk) || 0) + cell.tarLead);
+      }
+      if (cell.actLead != null) {
+        actLeadByMonth.set(mk, (actLeadByMonth.get(mk) || 0) + cell.actLead);
       }
     }
   }
@@ -171,7 +173,7 @@ export function buildModel(
     new Set(
       targetMonths.filter(
         (mk) =>
-          (tarLeadByMonth.get(mk) || 0) > 0 && (dailyCountByMonth.get(mk) || 0) > 0
+          (tarLeadByMonth.get(mk) || 0) > 0 && (actLeadByMonth.get(mk) || 0) > 0
       )
     )
   );
@@ -210,6 +212,25 @@ export function buildModel(
       leadByPaMonth.set(key, inner);
     }
     inner.set(d.month, (inner.get(d.month) || 0) + 1);
+  }
+
+  // ---- Act.Lead index (from the Target tab) — the "actual lead" for
+  //      performance/attainment, keyed by normName(pa). ----
+  const actLeadByPaMonth = new Map<string, Map<MonthKey, number>>();
+  const actLeadTotalByPa = new Map<string, number>();
+  for (const r of target.rows) {
+    if (!r.paName) continue;
+    const key = normName(r.paName);
+    let inner = actLeadByPaMonth.get(key);
+    if (!inner) {
+      inner = new Map();
+      actLeadByPaMonth.set(key, inner);
+    }
+    for (const [mk, cell] of Object.entries(r.months)) {
+      if (cell.actLead == null) continue;
+      inner.set(mk, (inner.get(mk) || 0) + cell.actLead);
+      actLeadTotalByPa.set(key, (actLeadTotalByPa.get(key) || 0) + cell.actLead);
+    }
   }
 
   // ---- actual sales join: Target tab `Code` -> sales `Customer Code` ----
@@ -284,6 +305,8 @@ export function buildModel(
     nuByPa,
     leadByPaMonth,
     leadTotalByPa,
+    actLeadByPaMonth,
+    actLeadTotalByPa,
     storesByPa,
     sales,
     salesByPa,
@@ -459,6 +482,20 @@ export function leadsForPa(model: DashboardModel, paName: string): number {
   return model.leadTotalByPa.get(normName(paName)) || 0;
 }
 
+/** Act.Lead (Target tab) for a PA + month — the "actual" lead for performance. */
+export function actLeadForPaMonth(
+  model: DashboardModel,
+  paName: string,
+  month: MonthKey
+): number {
+  return model.actLeadByPaMonth.get(normName(paName))?.get(month) || 0;
+}
+
+/** Total Act.Lead (Target tab) for a PA across all months. */
+export function actLeadForPa(model: DashboardModel, paName: string): number {
+  return model.actLeadTotalByPa.get(normName(paName)) || 0;
+}
+
 /** Sum of Tar.Lead for a PA across its target rows for a month. */
 export function tarLeadForPaMonth(
   model: DashboardModel,
@@ -513,7 +550,7 @@ export function attainmentPct(
 ): number | null {
   const target = tarLeadForPaMonth(model, paName, month);
   if (target <= 0) return null;
-  const actual = leadsForPaMonth(model, paName, month);
+  const actual = actLeadForPaMonth(model, paName, month);
   return (actual / target) * 100;
 }
 
@@ -529,7 +566,7 @@ export function attainmentOverMonths(
     const t = tarLeadForPaMonth(model, paName, m);
     if (t <= 0) continue;
     target += t;
-    actual += leadsForPaMonth(model, paName, m);
+    actual += actLeadForPaMonth(model, paName, m);
   }
   return target > 0 ? (actual / target) * 100 : null;
 }
@@ -589,7 +626,7 @@ export function teamAttainment(
       const t = tarLeadForPaMonth(model, p.name, m);
       if (t <= 0) continue;
       target += t;
-      actual += leadsForPaMonth(model, p.name, m);
+      actual += actLeadForPaMonth(model, p.name, m);
     }
   }
   return target > 0 ? (actual / target) * 100 : null;
@@ -606,7 +643,7 @@ export function overallAttainmentForMonth(
     const t = tarLeadForPaMonth(model, p.name, month);
     if (t <= 0) continue;
     target += t;
-    actual += leadsForPaMonth(model, p.name, month);
+    actual += actLeadForPaMonth(model, p.name, month);
   }
   return target > 0 ? (actual / target) * 100 : null;
 }
@@ -623,7 +660,7 @@ export function overallAttainment(
       const tt = tarLeadForPaMonth(model, p.name, m);
       if (tt > 0) {
         t += tt;
-        a += leadsForPaMonth(model, p.name, m);
+        a += actLeadForPaMonth(model, p.name, m);
       }
     }
   }
@@ -659,7 +696,7 @@ export function buildASMRollups(model: DashboardModel): ASMRollup[] {
       let leads = 0;
       let nuTotal = 0;
       for (const p of pas) {
-        leads += leadsForPa(model, p.name);
+        leads += actLeadForPa(model, p.name);
         nuTotal += nuForPa(model, p.name).total;
       }
       return {
@@ -692,7 +729,7 @@ export function buildPASummaries(model: DashboardModel): PASummary[] {
         name: p.name,
         asm: p.asm,
         outlet: p.outlet,
-        leads: leadsForPa(model, p.name),
+        leads: actLeadForPa(model, p.name),
         attainment: attainmentOverMonths(model, p.name, model.attainmentMonths),
         nuTotal: nu.total,
         nuByBrand: nu.byBrand,

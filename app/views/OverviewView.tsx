@@ -4,8 +4,8 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
   attainmentOverMonths,
-  leadsForPa,
-  leadsForPaMonth,
+  actLeadForPa,
+  actLeadForPaMonth,
   salesForPa,
   salesTargetForPa,
   tarLeadForPaMonth,
@@ -269,8 +269,8 @@ export function OverviewView() {
     const tgtMonths = monthScope ?? model.targetMonths;
     return scopePas.map((p) => {
       const leads = monthScope
-        ? monthScope.reduce((s, m) => s + leadsForPaMonth(model, p.name, m), 0)
-        : leadsForPa(model, p.name);
+        ? monthScope.reduce((s, m) => s + actLeadForPaMonth(model, p.name, m), 0)
+        : actLeadForPa(model, p.name);
       const leadTar = tgtMonths.reduce(
         (s, m) => s + targetLeadForPaMonth(model, p.name, m),
         0
@@ -315,7 +315,7 @@ export function OverviewView() {
             const tt = tarLeadForPaMonth(model, p.name, m);
             if (tt > 0) {
               t += tt;
-              a += leadsForPaMonth(model, p.name, m);
+              a += actLeadForPaMonth(model, p.name, m);
             }
           }
         return {

@@ -5,7 +5,7 @@ import { useDashboardData } from "../lib/useData";
 import {
   filteredDaily,
   filteredNU,
-  leadsForPaMonth,
+  actLeadForPaMonth,
   tarLeadForPaMonth,
   targetLeadForPaMonth,
   tarLeadForScopeMonth,
@@ -360,7 +360,7 @@ function combinedAttainment(
       const tt = targetLeadForPaMonth(model, p.name, m);
       if (tt > 0) {
         t += tt;
-        a += leadsForPaMonth(model, p.name, m);
+        a += actLeadForPaMonth(model, p.name, m);
       }
     }
   }
@@ -399,7 +399,7 @@ function computeAttainmentData(
       const cells = months.map((m) => {
         // Use Tar.Lead, or Quali.Lead where Tar.Lead is absent (March).
         const t = targetLeadForPaMonth(model, p.name, m);
-        const a = leadsForPaMonth(model, p.name, m);
+        const a = actLeadForPaMonth(model, p.name, m);
         return { t, a, pct: t > 0 ? (a / t) * 100 : null };
       });
       const tTot = cells.reduce((s, c) => s + c.t, 0);
@@ -595,7 +595,7 @@ function AttainmentByPatl({
           const tt = targetLeadForPaMonth(model, p.name, m);
           if (tt > 0) {
             t += tt;
-            a += leadsForPaMonth(model, p.name, m);
+            a += actLeadForPaMonth(model, p.name, m);
           }
         }
         return { a, t, pct: t > 0 ? (a / t) * 100 : null };
@@ -860,9 +860,18 @@ export function BiReportView() {
     let actual = 0;
     for (const m of months) {
       target += tarLeadForScopeMonth(model, filter, m);
-      actual += filteredDaily(model, { ...filter, monthKeys: [m] }).length;
+      actual += sumTargetField(model, filter, m, "actLead");
     }
     return target > 0 ? (actual / target) * 100 : null;
+  }, [model, filter, monthScope]);
+
+  // Total actual leads (Act.Lead) in scope — for the KPI.
+  const scopeActLead = useMemo(() => {
+    if (!model) return 0;
+    const months = monthScope ?? model.targetMonths;
+    let s = 0;
+    for (const m of months) s += sumTargetField(model, filter, m, "actLead");
+    return s;
   }, [model, filter, monthScope]);
 
   // Monthly lead vs target (Target = Tar.Lead only). This chart stays "stagnant"
@@ -993,7 +1002,7 @@ export function BiReportView() {
 
       {/* KPI strip */}
       <div className="mb-3 grid grid-cols-3 gap-2">
-        <KpiTile label="Leads" value={fmtInt(scopedDaily.length)} />
+        <KpiTile label="Leads (Act.Lead)" value={fmtInt(scopeActLead)} />
         <KpiTile
           label="Attainment"
           value={scopeAttainment == null ? "n/a" : fmtPct(scopeAttainment)}
