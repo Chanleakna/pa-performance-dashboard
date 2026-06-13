@@ -187,12 +187,21 @@ function HeatMap({
 // ---- Attainment % by PA (Actual ÷ Target, amber heatmap, by month) -----------
 
 /** Amber cell background scaled by attainment %. Null target => neutral. */
-function amberStyle(pct: number | null): React.CSSProperties {
+function attainStyle(pct: number | null): React.CSSProperties {
   if (pct == null) return { backgroundColor: "#f1f5f9", color: "#94a3b8" };
-  const intensity = Math.min(pct, 120) / 120; // 0..1, capped so 120%+ is full
+  if (pct >= 100) {
+    // Achieved — green, deeper the further above target.
+    const i = Math.min((pct - 100) / 100, 1);
+    return {
+      backgroundColor: `rgba(22, 163, 74, ${0.2 + 0.6 * i})`,
+      color: i > 0.45 ? "#fff" : "#14532d",
+    };
+  }
+  // Below target — red, deeper the further below.
+  const i = Math.min((100 - pct) / 100, 1);
   return {
-    backgroundColor: `rgba(217, 119, 6, ${0.12 + 0.88 * intensity})`,
-    color: intensity > 0.5 ? "#fff" : "#7c2d12",
+    backgroundColor: `rgba(220, 38, 38, ${0.18 + 0.62 * i})`,
+    color: i > 0.5 ? "#fff" : "#7f1d1d",
   };
 }
 
@@ -283,11 +292,11 @@ function AttainmentHeatmap({
           <tr className="font-semibold">
             <td className={nameCell + " text-amber-800"}>Total (all PAs)</td>
             {totalsByMonth.map((t, i) => (
-              <td key={i} className={cellCls} style={amberStyle(t.pct)}>
+              <td key={i} className={cellCls} style={attainStyle(t.pct)}>
                 {cellBody(t.pct, t.a, t.t)}
               </td>
             ))}
-            <td className={cellCls} style={amberStyle(grand.pct)}>
+            <td className={cellCls} style={attainStyle(grand.pct)}>
               {cellBody(grand.pct, grand.a, grand.t)}
             </td>
           </tr>
@@ -297,11 +306,11 @@ function AttainmentHeatmap({
                 {r.name}
               </td>
               {r.cells.map((c, i) => (
-                <td key={i} className={cellCls} style={amberStyle(c.pct)}>
+                <td key={i} className={cellCls} style={attainStyle(c.pct)}>
                   {cellBody(c.pct, c.a, c.t)}
                 </td>
               ))}
-              <td className={cellCls + " font-medium"} style={amberStyle(r.pctTot)}>
+              <td className={cellCls + " font-medium"} style={attainStyle(r.pctTot)}>
                 {cellBody(r.pctTot, r.aTot, r.tTot)}
               </td>
             </tr>
@@ -311,8 +320,10 @@ function AttainmentHeatmap({
       <p className="mt-2 text-[11px] text-slate-400">
         Each cell shows <span className="font-medium">attainment %</span> with{" "}
         <span className="font-medium">Actual / Target</span> beneath (daily Actual ÷
-        Tar.Lead), amber-shaded by level. Top row is all PAs combined; months
-        without a Tar.Lead show &ldquo;—&rdquo;.
+        Tar.Lead). <span className="font-medium text-emerald-700">Green</span> = at
+        or above target (≥100%); <span className="font-medium text-red-700">red</span>{" "}
+        = below. Top row is all PAs combined; months without a Tar.Lead show
+        &ldquo;—&rdquo;.
       </p>
     </div>
   );
@@ -588,7 +599,7 @@ export function BiReportView() {
 
       <Panel
         title="Attainment % by PA"
-        hint="Actual ÷ Target · by month · amber"
+        hint="green = achieved · red = below target"
         className="mt-3"
       >
         <AttainmentHeatmap model={model} pas={scopePas} months={targetTableMonths} />
