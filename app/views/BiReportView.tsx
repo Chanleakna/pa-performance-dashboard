@@ -23,6 +23,7 @@ import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import {
   GroupedBarChart,
   HorizontalLabeledBar,
+  LabeledBarChart,
   DailyTrendChart,
 } from "../components/charts";
 
@@ -960,6 +961,30 @@ export function BiReportView() {
       .filter((r) => r.Actual > 0 || r.Target > 0);
   }, [model, scopeOnly, slicer.years, allMonths]);
 
+  // % NU / Lead by month: New Users (Total Final NU) ÷ Act.Lead (Target tab).
+  const nuPerLead = useMemo(() => {
+    if (!model) return [];
+    const monthsToShow = slicer.years.length
+      ? allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")))
+      : allMonths;
+    const nuByMonth = new Map<string, number>();
+    for (const r of filteredNU(model, scopeOnly)) {
+      nuByMonth.set(r.month, (nuByMonth.get(r.month) || 0) + 1);
+    }
+    return monthsToShow
+      .map((m) => {
+        const lead = sumTargetField(model, scopeOnly, m, "actLead");
+        const nu = nuByMonth.get(m) || 0;
+        return {
+          label: monthLabel(m).replace(" 20", " '"),
+          pct: lead > 0 ? Math.round((nu / lead) * 100) : 0,
+          nu,
+          lead,
+        };
+      })
+      .filter((r) => r.nu > 0 || r.lead > 0);
+  }, [model, scopeOnly, slicer.years, allMonths]);
+
   // daily/monthly lead + NU trend
   const trend = useMemo(() => {
     if (!model) return [];
@@ -1139,6 +1164,29 @@ export function BiReportView() {
             { key: "Target", name: "Target NU", color: "#99f6e4" },
             { key: "Actual", name: "Actual NU", color: "#0d9488" },
           ]}
+        />
+      </Panel>
+
+      <Panel
+        title="% NU / Lead by Month"
+        hint="New Users ÷ Act.Lead"
+        className="mt-3"
+        exportName="nu-per-lead"
+        exportRows={() =>
+          nuPerLead.map((r) => ({
+            Month: r.label,
+            "New Users": r.nu,
+            "Act.Lead": r.lead,
+            "NU/Lead %": r.pct,
+          }))
+        }
+      >
+        <LabeledBarChart
+          data={nuPerLead}
+          dataKey="pct"
+          xKey="label"
+          color="#6366f1"
+          valueFormatter={(v) => `${v}%`}
         />
       </Panel>
 
