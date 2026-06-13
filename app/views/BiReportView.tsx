@@ -144,15 +144,17 @@ function HeatMap({
               </td>
               {cols.map((c) => {
                 const v = r.m.get(c.key) || 0;
-                const intensity = v === 0 ? 0 : 0.15 + 0.85 * (v / max);
+                // Light-red scale, capped so the busiest days stay light red
+                // (not near-black) and the numbers remain readable.
+                const intensity = v === 0 ? 0 : 0.12 + 0.6 * (v / max);
                 return (
                   <td
                     key={c.key}
                     title={`${r.pa} · ${c.label}: ${v}`}
-                    className="h-5 w-5 min-w-[20px] rounded text-center text-[9px] text-white"
+                    className="h-5 w-5 min-w-[20px] rounded text-center text-[9px]"
                     style={{
-                      backgroundColor: v === 0 ? "#f1f5f9" : `rgba(37, 99, 235, ${intensity})`,
-                      color: intensity > 0.5 ? "#fff" : "#1e3a8a",
+                      backgroundColor: v === 0 ? "#f8fafc" : `rgba(248, 113, 113, ${intensity})`,
+                      color: "#7f1d1d",
                     }}
                   >
                     {v || ""}
@@ -203,7 +205,7 @@ function AttainmentHeatmap({
   pas: { name: string; asm: string }[];
   months: MonthKey[];
 }) {
-  const { rows, totalsByMonth, grandPct } = useMemo(() => {
+  const { rows, totalsByMonth, grand } = useMemo(() => {
     const rows = pas
       .map((p) => {
         const cells = months.map((m) => {
@@ -214,7 +216,7 @@ function AttainmentHeatmap({
         const tTot = cells.reduce((s, c) => s + c.t, 0);
         const aTot = cells.reduce((s, c) => s + c.a, 0);
         const pctTot = tTot > 0 ? (aTot / tTot) * 100 : null;
-        return { name: p.name, asm: p.asm, cells, tTot, pctTot };
+        return { name: p.name, asm: p.asm, cells, tTot, aTot, pctTot };
       })
       .filter((r) => r.tTot > 0)
       .sort((a, b) => b.tTot - a.tTot)
@@ -227,16 +229,16 @@ function AttainmentHeatmap({
         a += r.cells[i].a;
         t += r.cells[i].t;
       }
-      return { pct: t > 0 ? (a / t) * 100 : null };
+      return { a, t, pct: t > 0 ? (a / t) * 100 : null };
     });
     let A = 0;
     let T = 0;
     for (const r of rows) {
-      A += r.cells.reduce((s, c) => s + c.a, 0);
+      A += r.aTot;
       T += r.tTot;
     }
-    const grandPct = T > 0 ? (A / T) * 100 : null;
-    return { rows, totalsByMonth, grandPct };
+    const grand = { a: A, t: T, pct: T > 0 ? (A / T) * 100 : null };
+    return { rows, totalsByMonth, grand };
   }, [model, pas, months]);
 
   if (months.length === 0)
@@ -249,7 +251,18 @@ function AttainmentHeatmap({
   const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
   const nameCell =
     "sticky left-0 z-10 max-w-[120px] truncate bg-white px-1.5 py-1 text-left";
-  const show = (pct: number | null) => (pct == null ? "—" : `${Math.round(pct)}%`);
+  // Each cell shows attainment %, with Actual/Target absolute numbers beneath.
+  const cellBody = (pct: number | null, a: number, t: number) =>
+    t > 0 ? (
+      <div className="leading-tight">
+        <div className="font-semibold">{Math.round(pct as number)}%</div>
+        <div className="text-[9px] opacity-80">
+          {fmtInt(a)}/{fmtInt(t)}
+        </div>
+      </div>
+    ) : (
+      "—"
+    );
 
   return (
     <div className="no-scrollbar overflow-x-auto">
@@ -271,11 +284,11 @@ function AttainmentHeatmap({
             <td className={nameCell + " text-amber-800"}>Total (all PAs)</td>
             {totalsByMonth.map((t, i) => (
               <td key={i} className={cellCls} style={amberStyle(t.pct)}>
-                {show(t.pct)}
+                {cellBody(t.pct, t.a, t.t)}
               </td>
             ))}
-            <td className={cellCls} style={amberStyle(grandPct)}>
-              {show(grandPct)}
+            <td className={cellCls} style={amberStyle(grand.pct)}>
+              {cellBody(grand.pct, grand.a, grand.t)}
             </td>
           </tr>
           {rows.map((r) => (
@@ -284,26 +297,22 @@ function AttainmentHeatmap({
                 {r.name}
               </td>
               {r.cells.map((c, i) => (
-                <td
-                  key={i}
-                  className={cellCls}
-                  style={amberStyle(c.pct)}
-                  title={`${r.name} · ${monthLabel(months[i])}: ${c.a} / ${c.t}`}
-                >
-                  {show(c.pct)}
+                <td key={i} className={cellCls} style={amberStyle(c.pct)}>
+                  {cellBody(c.pct, c.a, c.t)}
                 </td>
               ))}
               <td className={cellCls + " font-medium"} style={amberStyle(r.pctTot)}>
-                {show(r.pctTot)}
+                {cellBody(r.pctTot, r.aTot, r.tTot)}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <p className="mt-2 text-[11px] text-slate-400">
-        Cells = <span className="font-medium">attainment %</span> (daily Actual ÷
-        Tar.Lead) per PA per month, amber-shaded by level. The top row is all PAs
-        combined. Months without a Tar.Lead show &ldquo;—&rdquo;.
+        Each cell shows <span className="font-medium">attainment %</span> with{" "}
+        <span className="font-medium">Actual / Target</span> beneath (daily Actual ÷
+        Tar.Lead), amber-shaded by level. Top row is all PAs combined; months
+        without a Tar.Lead show &ldquo;—&rdquo;.
       </p>
     </div>
   );
