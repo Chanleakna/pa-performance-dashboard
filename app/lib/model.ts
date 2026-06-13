@@ -19,6 +19,7 @@ import {
   type TargetRow,
   type TrainingRow,
   type MonthKey,
+  type MonthCell,
   normName,
   UNASSIGNED,
 } from "./parse";
@@ -274,6 +275,23 @@ export function tarLeadForScopeMonth(
     if (cell && cell.tarLead != null) t += cell.tarLead;
   }
   return t;
+}
+
+/** Sum of any target metric (e.g. tarNU/actNU) for a month, scoped by filter. */
+export function sumTargetField(
+  model: DashboardModel,
+  filter: Filter,
+  month: MonthKey,
+  field: keyof MonthCell
+): number {
+  let s = 0;
+  for (const r of model.target.rows) {
+    if (!scopeAllows(filter, r.paName, r.asm)) continue;
+    const cell = r.months[month];
+    const v = cell ? cell[field] : null;
+    if (v != null) s += v;
+  }
+  return s;
 }
 
 /** Daily leads for a specific PA + month (row count). */

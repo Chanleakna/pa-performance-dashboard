@@ -9,6 +9,7 @@ import {
   tarLeadForPaMonth,
   targetLeadForPaMonth,
   tarLeadForScopeMonth,
+  sumTargetField,
   type DashboardModel,
   type Filter,
 } from "../lib/model";
@@ -498,6 +499,22 @@ export function BiReportView() {
       .filter((r) => r.Actual > 0 || r.Target > 0);
   }, [model, scopeOnly, slicer.years, allMonths]);
 
+  // Monthly NU: Target (Tar.NU) vs Actual (Act.NU) from the Target & Actual tab.
+  // Stagnant across months like the Lead chart; scoped by Year + PATL/PA only.
+  const nuTargetVsActual = useMemo(() => {
+    if (!model) return [];
+    const monthsToShow = slicer.years.length
+      ? allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")))
+      : allMonths;
+    return monthsToShow
+      .map((m) => ({
+        label: monthLabel(m).replace(" 20", " '"),
+        Target: sumTargetField(model, scopeOnly, m, "tarNU"),
+        Actual: sumTargetField(model, scopeOnly, m, "actNU"),
+      }))
+      .filter((r) => r.Actual > 0 || r.Target > 0);
+  }, [model, scopeOnly, slicer.years, allMonths]);
+
   // daily/monthly lead + NU trend
   const trend = useMemo(() => {
     if (!model) return [];
@@ -641,6 +658,21 @@ export function BiReportView() {
           />
         </Panel>
       </div>
+
+      <Panel
+        title="Monthly NU: Target vs Actual"
+        hint="all months · Tar.NU vs Act.NU"
+        className="mt-3"
+      >
+        <GroupedBarChart
+          data={nuTargetVsActual}
+          xKey="label"
+          series={[
+            { key: "Target", name: "Target NU", color: "#99f6e4" },
+            { key: "Actual", name: "Actual NU", color: "#0d9488" },
+          ]}
+        />
+      </Panel>
 
       <Panel
         title="Attainment % by PA"
