@@ -6,7 +6,6 @@ import {
   asmForPa,
   filteredDaily,
   filteredNU,
-  pasForAsm,
   summarizeNU,
   tarLeadForPaMonth,
   tarLeadForScopeMonth,
@@ -214,10 +213,10 @@ export function BiReportView() {
   const data = useDashboardData();
   const { model } = data;
   const [slicer, setSlicer] = useState<SlicerState>({
-    year: "all",
-    month: "all",
-    asm: "all",
-    pa: "all",
+    years: [],
+    months: [],
+    asms: [],
+    pas: [],
   });
 
   // Year and full-month-key lists for the slicers.
@@ -237,31 +236,39 @@ export function BiReportView() {
   }, [allMonths]);
 
   // A single month selected => day-level views; otherwise month-level.
-  const specificMonth = slicer.month !== "all" ? slicer.month : null;
-  // Resolve Year + Month into the concrete month scope (null = all months).
+  const specificMonth = slicer.months.length === 1 ? slicer.months[0] : null;
+  // Resolve Year + Month (multi) into the concrete month scope (null = all).
   const monthScope = useMemo<MonthKey[] | null>(() => {
-    if (slicer.month !== "all") return [slicer.month];
-    if (slicer.year !== "all")
-      return allMonths.filter((m) => m.startsWith(slicer.year + "-"));
+    if (slicer.months.length) return slicer.months;
+    if (slicer.years.length)
+      return allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")));
     return null;
-  }, [slicer.month, slicer.year, allMonths]);
+  }, [slicer.months, slicer.years, allMonths]);
 
-  const filter: Filter = useMemo(
-    () => ({ asm: slicer.asm, pa: slicer.pa, monthKeys: monthScope ?? undefined }),
-    [slicer.asm, slicer.pa, monthScope]
+  // PA/PATL scope, ignoring any month constraint (shared by panels).
+  const scopeOnly: Filter = useMemo(
+    () => ({ asms: slicer.asms, pas: slicer.pas }),
+    [slicer.asms, slicer.pas]
   );
 
-  // Months used for Actual/Target/% rollups in the heatmap & lead-vs-target.
+  const filter: Filter = useMemo(
+    () => ({ ...scopeOnly, monthKeys: monthScope ?? undefined }),
+    [scopeOnly, monthScope]
+  );
+
+  // Months used for Actual/Target/% rollups in the heatmap.
   const summaryMonths = useMemo<MonthKey[]>(
     () => monthScope ?? allMonths,
     [monthScope, allMonths]
   );
 
-  // PA options cascade from the chosen PATL (Team Leader).
-  const pasForAsmFn = useMemo(() => {
-    return (asm: string) => {
+  // PA options cascade from the selected PATLs (union; [] => every PA).
+  const pasForAsmsFn = useMemo(() => {
+    return (asms: string[]) => {
       if (!model) return [];
-      const list = asm === "all" ? model.pas : pasForAsm(model, asm);
+      const list = asms.length
+        ? model.pas.filter((p) => asms.includes(p.asm))
+        : model.pas;
       return list.map((p) => p.name);
     };
   }, [model]);
@@ -287,17 +294,22 @@ export function BiReportView() {
     return target > 0 ? (actual / target) * 100 : null;
   }, [model, filter, monthScope]);
 
-  // Monthly lead vs target (Target = Tar.Lead only).
+  // Monthly lead vs target (Target = Tar.Lead only). This chart stays "stagnant"
+  // across every month — the Month slicer does NOT collapse it; only Year and
+  // PATL/PA scope it. Always shows the full monthly trend for context.
   const leadVsTarget = useMemo(() => {
     if (!model) return [];
-    return summaryMonths
+    const monthsToShow = slicer.years.length
+      ? allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")))
+      : allMonths;
+    return monthsToShow
       .map((m) => ({
         label: monthLabel(m).split(" ")[0],
-        Target: tarLeadForScopeMonth(model, filter, m),
-        Actual: filteredDaily(model, { ...filter, monthKeys: [m] }).length,
+        Target: tarLeadForScopeMonth(model, scopeOnly, m),
+        Actual: filteredDaily(model, { ...scopeOnly, monthKeys: [m] }).length,
       }))
       .filter((r) => r.Actual > 0 || r.Target > 0);
-  }, [model, filter, summaryMonths]);
+  }, [model, scopeOnly, slicer.years, allMonths]);
 
   // daily/monthly lead + NU trend
   const trend = useMemo(() => {
@@ -399,7 +411,7 @@ export function BiReportView() {
         years={years}
         months={allMonths}
         asms={model.asms}
-        pasForAsm={pasForAsmFn}
+        pasForAsms={pasForAsmsFn}
       />
 
       {/* KPI strip */}
@@ -413,14 +425,16 @@ export function BiReportView() {
         <KpiTile
           label="PAs"
           value={fmtInt(
-            slicer.pa !== "all" ? 1 : slicer.asm !== "all" ? pasForAsm(model, slicer.asm).length : model.pas.length
+            slicer.pas.length
+              ? slicer.pas.length
+              : pasForAsmsFn(slicer.asms).length
           )}
         />
         <PlaceholderPanel title="Total IMS" />
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel title="Monthly Lead vs Target" hint="Target Lead = Tar.Lead only">
+        <Panel title="Monthly Lead vs Target" hint="all months · Tar.Lead only">
           <GroupedBarChart
             data={leadVsTarget}
             xKey="label"
@@ -429,11 +443,19 @@ export function BiReportView() {
               { key: "Actual", name: "Actual Lead", color: "#1d4ed8" },
             ]}
           />
+          {leadVsTarget.length > 0 &&
+            leadVsTarget.every((r) => r.Target === 0) && (
+              <p className="mt-1 text-[11px] text-status-red">
+                No Target Lead values detected ({model.target.rows.length} target
+                rows parsed). Make sure the &ldquo;Target &amp; Actual of Lead &amp;
+                NU&rdquo; tab is published as CSV and has a Tar.Lead column.
+              </p>
+            )}
         </Panel>
 
         <Panel
           title="Lead & NU Trend"
-          hint={slicer.month === "all" ? "by month" : "by day"}
+          hint={specificMonth ? "by day" : "by month"}
         >
           <DailyTrendChart
             data={trend}

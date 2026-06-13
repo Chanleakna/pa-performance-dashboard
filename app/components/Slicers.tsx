@@ -1,54 +1,97 @@
 "use client";
 
+import { useState } from "react";
 import { monthLabel } from "../lib/parse";
 
-/** A single labeled <select> slicer. */
-export function SelectSlicer({
+/**
+ * A multi-select dropdown (checkbox popover) — works well on phones. Empty
+ * selection means "All". Closes when you tap outside.
+ */
+export function MultiSelectSlicer({
   label,
-  value,
+  values,
   options,
   onChange,
   formatOption,
-  allLabel = "All",
 }: {
   label: string;
-  value: string;
+  values: string[];
   options: string[];
-  onChange: (v: string) => void;
+  onChange: (v: string[]) => void;
   formatOption?: (v: string) => string;
-  allLabel?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const fmt = (v: string) => (formatOption ? formatOption(v) : v);
+  const summary =
+    values.length === 0
+      ? "All"
+      : values.length === 1
+      ? fmt(values[0])
+      : `${values.length} selected`;
+
+  const toggle = (o: string) =>
+    onChange(values.includes(o) ? values.filter((v) => v !== o) : [...values, o]);
+
   return (
-    <label className="flex min-w-0 flex-col gap-1">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+    <div className="relative min-w-0">
+      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">
         {label}
       </span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300"
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-1 rounded-lg border border-slate-200 bg-white px-2 py-2 text-left text-sm text-slate-800 shadow-sm focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-300"
       >
-        <option value="all">{allLabel}</option>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {formatOption ? formatOption(o) : o}
-          </option>
-        ))}
-      </select>
-    </label>
+        <span className="truncate">{summary}</span>
+        <span className="shrink-0 text-slate-400">▾</span>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-40 mt-1 max-h-64 w-full min-w-[170px] overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="flex w-full items-center justify-between px-2 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50"
+            >
+              All <span className="text-slate-400">clear</span>
+            </button>
+            <div className="my-1 border-t border-slate-100" />
+            {options.map((o) => (
+              <label
+                key={o}
+                className="flex cursor-pointer items-center gap-2 px-2 py-1.5 text-sm hover:bg-slate-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={values.includes(o)}
+                  onChange={() => toggle(o)}
+                  className="h-3.5 w-3.5 accent-brand-600"
+                />
+                <span className="truncate text-slate-700">{fmt(o)}</span>
+              </label>
+            ))}
+            {options.length === 0 && (
+              <div className="px-2 py-2 text-xs text-slate-400">No options</div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 export interface SlicerState {
-  year: string; // "all" | "2025" | "2026"
-  month: string; // "all" | monthKey (e.g. "2026-01")
-  asm: string; // "all" | PATL (Team Leader) name
-  pa: string; // "all" | PA name
+  years: string[]; // [] = all
+  months: string[]; // [] = all (full month keys, e.g. "2026-01")
+  asms: string[]; // [] = all (PATL / Team Leader)
+  pas: string[]; // [] = all (PA name)
 }
 
 /**
- * Cascading Year / Month / PATL / PA slicers. Year narrows the Month list;
- * PATL (PA Team Leader) narrows the PA list. Every panel recomputes off these.
+ * Cascading multi-select Year / Month / PATL / PA slicers. Year narrows the
+ * Month list; PATL (PA Team Leader) narrows the PA list. Every panel recomputes.
  */
 export function CascadingSlicers({
   state,
@@ -56,63 +99,65 @@ export function CascadingSlicers({
   years,
   months,
   asms,
-  pasForAsm,
+  pasForAsms,
 }: {
   state: SlicerState;
   onChange: (s: SlicerState) => void;
   years: string[];
-  months: string[]; // full month keys, e.g. "2026-01"
+  months: string[]; // full month keys
   asms: string[];
-  /** PA names available for the currently-selected PATL ("all" => every PA). */
-  pasForAsm: (asm: string) => string[];
+  /** PA names available for the selected PATLs ([] => every PA). */
+  pasForAsms: (asms: string[]) => string[];
 }) {
-  // Month options narrow to the chosen year.
-  const monthOptions =
-    state.year === "all"
-      ? months
-      : months.filter((m) => m.startsWith(state.year + "-"));
-  const paOptions = pasForAsm(state.asm);
+  const monthsForYears = (ys: string[]) =>
+    ys.length ? months.filter((m) => ys.some((y) => m.startsWith(y + "-"))) : months;
+
+  const monthOptions = monthsForYears(state.years);
+  const paOptions = pasForAsms(state.asms);
 
   return (
     <div className="sticky top-[97px] z-20 -mx-4 mb-3 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <SelectSlicer
+        <MultiSelectSlicer
           label="Year"
-          value={state.year}
+          values={state.years}
           options={years}
-          onChange={(year) =>
-            // Reset the month if it no longer belongs to the chosen year.
+          onChange={(ys) => {
+            // Prune months that no longer belong to the chosen years.
+            const allowed = monthsForYears(ys);
             onChange({
               ...state,
-              year,
-              month:
-                year !== "all" && !state.month.startsWith(year + "-")
-                  ? "all"
-                  : state.month,
-            })
-          }
+              years: ys,
+              months: state.months.filter((m) => allowed.includes(m)),
+            });
+          }}
         />
-        <SelectSlicer
+        <MultiSelectSlicer
           label="Month"
-          value={state.month}
+          values={state.months}
           options={monthOptions}
           formatOption={monthLabel}
-          onChange={(month) => onChange({ ...state, month })}
+          onChange={(ms) => onChange({ ...state, months: ms })}
         />
-        <SelectSlicer
+        <MultiSelectSlicer
           label="PATL"
-          value={state.asm}
+          values={state.asms}
           options={asms}
-          onChange={(asm) =>
-            // Reset PA when the team leader changes so the cascade stays valid.
-            onChange({ ...state, asm, pa: "all" })
-          }
+          onChange={(a) => {
+            // Prune PAs that no longer belong to the chosen team leaders.
+            const allowedPas = pasForAsms(a);
+            onChange({
+              ...state,
+              asms: a,
+              pas: state.pas.filter((p) => allowedPas.includes(p)),
+            });
+          }}
         />
-        <SelectSlicer
+        <MultiSelectSlicer
           label="PA Name"
-          value={state.pa}
+          values={state.pas}
           options={paOptions}
-          onChange={(pa) => onChange({ ...state, pa })}
+          onChange={(p) => onChange({ ...state, pas: p })}
         />
       </div>
     </div>

@@ -196,6 +196,10 @@ export interface Filter {
   monthKeys?: MonthKey[];
   asm?: string | "all";
   pa?: string | "all";
+  /** Multi-select variants (Lead Performance page). Empty/absent = no filter.
+   *  When `pas` is non-empty it takes precedence over `asms` (more specific). */
+  asms?: string[];
+  pas?: string[];
 }
 
 /** Does a row's month pass the filter's month / monthKeys constraint? */
@@ -209,14 +213,30 @@ function matchesMonth(filter: Filter, month: MonthKey): boolean {
   return true;
 }
 
-function matchesPa(model: DashboardModel, leadPa: string, filter: Filter): boolean {
-  if (filter.pa && filter.pa !== "all") {
-    return normName(leadPa) === normName(filter.pa);
+function hasPaFilter(filter: Filter): boolean {
+  return Boolean((filter.pas && filter.pas.length) || (filter.pa && filter.pa !== "all"));
+}
+function hasAsmFilter(filter: Filter): boolean {
+  return Boolean((filter.asms && filter.asms.length) || (filter.asm && filter.asm !== "all"));
+}
+
+/** Does a (PA name, ASM) pair pass the filter's PA/PATL constraint? */
+function scopeAllows(filter: Filter, paName: string, asm: string): boolean {
+  if (hasPaFilter(filter)) {
+    const key = normName(paName);
+    if (filter.pas && filter.pas.length) return filter.pas.some((p) => normName(p) === key);
+    return normName(filter.pa as string) === key;
   }
-  if (filter.asm && filter.asm !== "all") {
-    return (model.paToAsm[normName(leadPa)] || UNASSIGNED) === filter.asm;
+  if (hasAsmFilter(filter)) {
+    if (filter.asms && filter.asms.length) return filter.asms.includes(asm);
+    return filter.asm === asm;
   }
   return true;
+}
+
+function matchesPa(model: DashboardModel, leadPa: string, filter: Filter): boolean {
+  const asm = model.paToAsm[normName(leadPa)] || UNASSIGNED;
+  return scopeAllows(filter, leadPa, asm);
 }
 
 /** Count daily leads matching a filter. (one row = one lead) */
@@ -249,9 +269,7 @@ export function tarLeadForScopeMonth(
 ): number {
   let t = 0;
   for (const r of model.target.rows) {
-    if (filter.pa && filter.pa !== "all" && normName(r.paName) !== normName(filter.pa))
-      continue;
-    if (filter.asm && filter.asm !== "all" && r.asm !== filter.asm) continue;
+    if (!scopeAllows(filter, r.paName, r.asm)) continue;
     const cell = r.months[month];
     if (cell && cell.tarLead != null) t += cell.tarLead;
   }
@@ -343,12 +361,8 @@ export function summarizeNU(recs: NURecord[]): { total: number; byBrand: BrandSp
 export function filteredNU(model: DashboardModel, filter: Filter = {}): NURecord[] {
   const out: NURecord[] = [];
   for (const [pa, recs] of Object.entries(model.nuByPa)) {
-    if (filter.pa && filter.pa !== "all" && normName(pa) !== normName(filter.pa))
-      continue;
-    if (filter.asm && filter.asm !== "all") {
-      const asm = pa === UNASSIGNED ? UNASSIGNED : model.paToAsm[normName(pa)] || UNASSIGNED;
-      if (asm !== filter.asm) continue;
-    }
+    const asm = pa === UNASSIGNED ? UNASSIGNED : model.paToAsm[normName(pa)] || UNASSIGNED;
+    if (!scopeAllows(filter, pa, asm)) continue;
     for (const r of recs) {
       if (!matchesMonth(filter, r.month)) continue;
       out.push(r);

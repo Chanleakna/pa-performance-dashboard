@@ -66,10 +66,28 @@ export function parseDayFirst(raw: string | undefined | null): Date | null {
   return isNaN(fallback.getTime()) ? null : fallback;
 }
 
-/** Month key from a header cell that may be ISO ("2026-03-26") or day-first. */
+const MONTH_ABBR = [
+  "jan", "feb", "mar", "apr", "may", "jun",
+  "jul", "aug", "sep", "oct", "nov", "dec",
+];
+
+/**
+ * Month key from a header cell. Handles ISO ("2026-03-26"), day-first
+ * ("26/03/2026"), and month-name forms ("Mar 2026", "Mar-26", "March 2026").
+ */
 function monthKeyFromHeaderCell(raw: string): MonthKey | null {
   const d = parseDayFirst(raw);
-  return d ? monthKeyFromDate(d) : null;
+  if (d) return monthKeyFromDate(d);
+  const m = raw
+    .toLowerCase()
+    .match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/]*['"]?(\d{2,4})/);
+  if (m) {
+    const idx = MONTH_ABBR.indexOf(m[1]);
+    let y = Number(m[2]);
+    if (y < 100) y += 2000;
+    if (idx >= 0) return `${y}-${String(idx + 1).padStart(2, "0")}`;
+  }
+  return null;
 }
 
 /** Parse a number that may contain commas, %, spaces, or be blank. */
@@ -227,14 +245,39 @@ export function parseTargetActual(csv: string): TargetParseResult {
     return { rows: [], months: [], paToAsm: {}, asms: [] };
   }
 
-  const headerMonths = rows2d[0]; // row 0 — merged month dates (sparse)
-  const headerSubs = rows2d[1]; // row 1 — repeating sub-headers
-  const bodyRows = rows2d.slice(2);
+  // A cell that clearly reads as a calendar date (used to find the month row).
+  const looksLikeDate = (raw: string): boolean =>
+    /\d{4}-\d{1,2}-\d{1,2}/.test(raw) ||
+    /\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}/.test(raw) ||
+    /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/]*['"]?\d{2,4}/i.test(raw);
 
-  // First 6 columns are identity columns; month blocks start at col 6.
-  const ID_COLS = 6;
+  // AUTO-DETECT the 2-row header instead of assuming rows 0/1: a sheet may have
+  // a title/blank row on top. The "month row" is whichever of the first few
+  // rows has the most date-like cells; the sub-header row is the next one.
+  let monthRowIdx = 0;
+  let bestDateCount = -1;
+  for (let i = 0; i < Math.min(8, rows2d.length - 1); i++) {
+    const count = rows2d[i].reduce(
+      (acc, cell) => acc + (looksLikeDate(String(cell ?? "").trim()) ? 1 : 0),
+      0
+    );
+    if (count > bestDateCount) {
+      bestDateCount = count;
+      monthRowIdx = i;
+    }
+  }
+  const headerMonths = rows2d[monthRowIdx]; // merged month dates (sparse)
+  const headerSubs = rows2d[monthRowIdx + 1] || []; // repeating sub-headers
+  const bodyRows = rows2d.slice(monthRowIdx + 2);
 
-  // Build a column map by scanning row-1 under the forward-filled row-0 month.
+  // Month blocks start at the first column of the month row that holds a date
+  // (the identity columns sit to its left). Fall back to the documented 6.
+  let monthStart = headerMonths.findIndex((c) =>
+    looksLikeDate(String(c ?? "").trim())
+  );
+  if (monthStart < 0) monthStart = 6;
+
+  // Build a column map by scanning sub-headers under the forward-filled month.
   interface ColMap {
     col: number;
     month: MonthKey;
@@ -245,7 +288,7 @@ export function parseTargetActual(csv: string): TargetParseResult {
   let currentMonth: MonthKey | null = null;
 
   const width = Math.max(headerMonths.length, headerSubs.length);
-  for (let c = ID_COLS; c < width; c++) {
+  for (let c = monthStart; c < width; c++) {
     const monthCellRaw = (headerMonths[c] ?? "").trim();
     if (monthCellRaw) {
       const mk = monthKeyFromHeaderCell(monthCellRaw);
