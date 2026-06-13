@@ -78,6 +78,12 @@ const MONTH_ABBR = [
  * the engine misreads things like "Jan-26" as 26 Jan 2001, which would scatter
  * months across bogus years (e.g. 2000/2001).
  */
+/** The month key immediately before a given one ("2026-02" -> "2026-01"). */
+function prevMonthKey(key: MonthKey): MonthKey {
+  const [y, m] = key.split("-").map(Number);
+  return monthKeyFromDate(new Date(y, m - 2, 1)); // m is 1-based; m-2 = prev month
+}
+
 function monthKeyFromHeaderCell(raw: string): MonthKey | null {
   const s = String(raw ?? "").trim();
   if (!s) return null;
@@ -302,11 +308,21 @@ export function parseTargetActual(csv: string): TargetParseResult {
   const headerMonths = rows2d[monthRowIdx]; // merged month dates (sparse)
   const width = rows2d.reduce((w, r) => Math.max(w, r.length), 0);
 
-  // Month blocks start at the first column of the month row that holds a date
-  // (the identity columns sit to its left). Fall back to the documented 6.
-  let monthStart = headerMonths.findIndex((c) =>
-    looksLikeDate(String(c ?? "").trim())
-  );
+  // Metric blocks begin at the first column whose header reads as a metric
+  // (Tar.Lead/Act.Lead/…). This is more reliable than the first DATE column,
+  // because the FIRST month's date label is sometimes blank/merged-away in the
+  // CSV export (e.g. January), which would otherwise skip that whole block.
+  const candidateSub = rows2d[monthRowIdx + 1] || [];
+  let monthStart = -1;
+  for (let c = 0; c < width; c++) {
+    const combo = `${String(headerMonths[c] ?? "")} ${String(candidateSub[c] ?? "")}`;
+    if (classifySubHeader(combo)) {
+      monthStart = c;
+      break;
+    }
+  }
+  if (monthStart < 0)
+    monthStart = headerMonths.findIndex((c) => looksLikeDate(String(c ?? "").trim()));
   if (monthStart < 0) monthStart = 6;
 
   // Where does the DATA begin? Header rows are label rows; a data row has
@@ -357,6 +373,24 @@ export function parseTargetActual(csv: string): TargetParseResult {
   const colMaps: ColMap[] = [];
   const monthOrder: MonthKey[] = [];
   let currentMonth: MonthKey | null = null;
+
+  // If metric columns appear BEFORE the first dated month header, the leading
+  // block is an unlabeled month (commonly January). Back-fill it as the month
+  // immediately before the first dated month so it isn't dropped.
+  let firstDatedCol = -1;
+  let firstDatedMonth: MonthKey | null = null;
+  for (let c = monthStart; c < width; c++) {
+    const mk = monthKeyFromHeaderCell(String(headerMonths[c] ?? "").trim());
+    if (mk) {
+      firstDatedCol = c;
+      firstDatedMonth = mk;
+      break;
+    }
+  }
+  if (firstDatedMonth && firstDatedCol > monthStart) {
+    currentMonth = prevMonthKey(firstDatedMonth);
+    monthOrder.push(currentMonth);
+  }
 
   for (let c = monthStart; c < width; c++) {
     const monthCellRaw = String(headerMonths[c] ?? "").trim();

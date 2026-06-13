@@ -15,7 +15,7 @@ import {
 import { monthLabel, type MonthKey } from "../lib/parse";
 import { fmtInt, fmtPct } from "../lib/format";
 import { DataStatus, LoadingState } from "../components/DataStatus";
-import { AttainmentPill } from "../components/ui";
+import { AttainmentPill, CollapsibleCard } from "../components/ui";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import {
   GroupedBarChart,
@@ -204,6 +204,38 @@ function attainStyle(pct: number | null): React.CSSProperties {
     backgroundColor: `rgba(220, 38, 38, ${0.18 + 0.62 * i})`,
     color: i > 0.5 ? "#fff" : "#7f1d1d",
   };
+}
+
+/** Combined attainment % for a set of PAs over months (Σactual ÷ Σtarget). */
+function combinedAttainment(
+  model: DashboardModel,
+  pas: { name: string }[],
+  months: MonthKey[]
+): number | null {
+  let a = 0;
+  let t = 0;
+  for (const p of pas) {
+    for (const m of months) {
+      const tt = targetLeadForPaMonth(model, p.name, m);
+      if (tt > 0) {
+        t += tt;
+        a += leadsForPaMonth(model, p.name, m);
+      }
+    }
+  }
+  return t > 0 ? (a / t) * 100 : null;
+}
+
+/** A small attainment % badge using the same green/red scale as the heatmap. */
+function AttainBadge({ pct }: { pct: number | null }) {
+  return (
+    <span
+      style={attainStyle(pct)}
+      className="rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+    >
+      {pct == null ? "n/a" : `${Math.round(pct)}%`}
+    </span>
+  );
 }
 
 function AttainmentHeatmap({
@@ -395,6 +427,16 @@ export function BiReportView() {
       return true;
     });
   }, [model, slicer.pas, slicer.asms]);
+
+  // PAs grouped by PATL (Team Leader) for the "% Attainment by PATL" section.
+  const patlTeams = useMemo(() => {
+    const map = new Map<string, { name: string; asm: string }[]>();
+    for (const p of scopePas) {
+      if (!map.has(p.asm)) map.set(p.asm, []);
+      map.get(p.asm)!.push(p);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [scopePas]);
 
   // Target months to show as columns. Always show ALL target months (scoped by
   // Year only) so the attainment matrix shows the full year — the Month slicer
@@ -606,6 +648,30 @@ export function BiReportView() {
         className="mt-3"
       >
         <AttainmentHeatmap model={model} pas={scopePas} months={targetTableMonths} />
+      </Panel>
+
+      <Panel
+        title="% Attainment by PATL"
+        hint="tap a team leader to expand its PAs"
+        className="mt-3"
+      >
+        <div className="space-y-2">
+          {patlTeams.map(([asm, teamPas]) => (
+            <CollapsibleCard
+              key={asm}
+              title={asm}
+              subtitle={`${teamPas.length} PA${teamPas.length === 1 ? "" : "s"}`}
+              right={
+                <AttainBadge pct={combinedAttainment(model, teamPas, targetTableMonths)} />
+              }
+            >
+              <AttainmentHeatmap model={model} pas={teamPas} months={targetTableMonths} />
+            </CollapsibleCard>
+          ))}
+          {patlTeams.length === 0 && (
+            <p className="py-4 text-center text-xs text-slate-400">No teams in scope.</p>
+          )}
+        </div>
       </Panel>
 
       <Panel
