@@ -245,7 +245,7 @@ function TargetByPaTable({
             <th className={nameCell + " font-medium"}>PA</th>
             {months.map((m) => (
               <th key={m} className={cell + " font-medium"}>
-                {monthLabel(m).split(" ")[0]}
+                {monthLabel(m).replace(" 20", " '")}
               </th>
             ))}
             <th className={cell + " font-semibold text-slate-500"}>Total</th>
@@ -402,7 +402,7 @@ export function BiReportView() {
       : allMonths;
     return monthsToShow
       .map((m) => ({
-        label: monthLabel(m).split(" ")[0],
+        label: monthLabel(m).replace(" 20", " '"),
         Target: tarLeadForScopeMonth(model, scopeOnly, m),
         Actual: filteredDaily(model, { ...scopeOnly, monthKeys: [m] }).length,
       }))
@@ -419,7 +419,7 @@ export function BiReportView() {
         const day = d.getDate();
         return { key: `${month}-${day}`, label: String(day), sort: String(day).padStart(2, "0") };
       }
-      return { key: month, label: monthLabel(month).split(" ")[0], sort: month };
+      return { key: month, label: monthLabel(month).replace(" 20", " '"), sort: month };
     };
     for (const d of scopedDaily) {
       const k = keyFor(d.createdAt, d.month);
