@@ -129,8 +129,9 @@ function computeHeatmapData(
 
   if (fiscalMonth) {
     const [y, mo] = fiscalMonth.split("-").map(Number); // mo is 1-based
-    const start = new Date(y, mo - 1, 26); // 26th of the month
-    const end = new Date(y, mo, 25, 23, 59, 59); // 25th of the next month
+    // Business month M runs from the 26th of the PREVIOUS month to the 25th of M.
+    const start = new Date(y, mo - 2, 26); // 26th of previous month
+    const end = new Date(y, mo - 1, 25, 23, 59, 59); // 25th of this month
     cols = [];
     const cur = new Date(start);
     while (cur <= end) {
