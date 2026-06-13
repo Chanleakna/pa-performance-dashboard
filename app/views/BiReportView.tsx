@@ -8,14 +8,16 @@ import {
   filteredNU,
   pasForAsm,
   summarizeNU,
+  tarLeadForPaMonth,
   tarLeadForScopeMonth,
   type DashboardModel,
   type Filter,
 } from "../lib/model";
-import { monthLabel } from "../lib/parse";
+import { monthLabel, type MonthKey } from "../lib/parse";
 import { BRANDS } from "../lib/config";
 import { fmtInt, fmtPct } from "../lib/format";
 import { DataStatus, LoadingState } from "../components/DataStatus";
+import { AttainmentPill } from "../components/ui";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import {
   GroupedBarChart,
@@ -79,17 +81,28 @@ function daysInMonth(monthKey: string): number {
   return new Date(y, m, 0).getDate();
 }
 
-function HeatMap({ model, filter }: { model: DashboardModel; filter: Filter }) {
+function HeatMap({
+  model,
+  filter,
+  specificMonth,
+  summaryMonths,
+}: {
+  model: DashboardModel;
+  filter: Filter;
+  /** A single selected month => day columns; otherwise month columns. */
+  specificMonth: string | null;
+  /** Months over which Actual/Target/% are rolled up (apple-to-apple). */
+  summaryMonths: MonthKey[];
+}) {
   const { cols, rows } = useMemo(() => {
     const daily = filteredDaily(model, filter);
-    const specificMonth = filter.month && filter.month !== "all" ? filter.month : null;
 
     const cols: { key: string; label: string }[] = specificMonth
       ? Array.from({ length: daysInMonth(specificMonth) }, (_, i) => ({
           key: String(i + 1),
           label: String(i + 1),
         }))
-      : model.dailyMonths.map((m) => ({ key: m, label: monthLabel(m).split(" ")[0] }));
+      : summaryMonths.map((m) => ({ key: m, label: monthLabel(m).split(" ")[0] }));
 
     // rows = PAs in scope (cap to keep mobile memory low)
     const byPa = new Map<string, Map<string, number>>();
@@ -111,14 +124,18 @@ function HeatMap({ model, filter }: { model: DashboardModel; filter: Filter }) {
 
     const rows = Array.from(byPa.entries())
       .map(([pa, m]) => {
-        const total = Array.from(m.values()).reduce((a, b) => a + b, 0);
-        return { pa, m, total };
+        const actual = Array.from(m.values()).reduce((a, b) => a + b, 0);
+        // Target = sum of Tar.Lead over the same months (only Tar.Lead, per spec).
+        let target = 0;
+        for (const mk of summaryMonths) target += tarLeadForPaMonth(model, pa, mk);
+        const pct = target > 0 ? (actual / target) * 100 : null;
+        return { pa, m, actual, target, pct };
       })
-      .sort((a, b) => b.total - a.total)
+      .sort((a, b) => b.actual - a.actual)
       .slice(0, 30);
 
     return { cols, rows };
-  }, [model, filter]);
+  }, [model, filter, specificMonth, summaryMonths]);
 
   const max = useMemo(
     () => rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1),
@@ -141,6 +158,9 @@ function HeatMap({ model, filter }: { model: DashboardModel; filter: Filter }) {
                 {c.label}
               </th>
             ))}
+            <th className="px-1 text-right font-semibold text-slate-500">Act</th>
+            <th className="px-1 text-right font-semibold text-slate-500">Tar</th>
+            <th className="px-1 text-right font-semibold text-slate-500">%</th>
           </tr>
         </thead>
         <tbody>
@@ -166,10 +186,24 @@ function HeatMap({ model, filter }: { model: DashboardModel; filter: Filter }) {
                   </td>
                 );
               })}
+              <td className="px-1 text-right font-semibold tabular-nums text-slate-700">
+                {fmtInt(r.actual)}
+              </td>
+              <td className="px-1 text-right tabular-nums text-slate-500">
+                {r.target > 0 ? fmtInt(r.target) : "—"}
+              </td>
+              <td className="px-1 text-right">
+                <AttainmentPill pct={r.pct} />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="mt-2 text-[11px] text-slate-400">
+        Cells = daily lead count. Act / Tar / % roll up over the selected scope
+        using only <span className="font-medium">Tar.Lead</span> (apple-to-apple).
+        Months without a Tar.Lead (e.g. March) show no %.
+      </p>
     </div>
   );
 }
@@ -180,17 +214,50 @@ export function BiReportView() {
   const data = useDashboardData();
   const { model } = data;
   const [slicer, setSlicer] = useState<SlicerState>({
+    year: "all",
     month: "all",
     asm: "all",
     pa: "all",
   });
 
+  // Year and full-month-key lists for the slicers.
+  const allMonths = useMemo<MonthKey[]>(() => {
+    if (!model) return [];
+    return Array.from(
+      new Set([...model.dailyMonths, ...model.targetMonths])
+    ).sort();
+  }, [model]);
+  const years = useMemo(() => {
+    const ys = new Set<string>();
+    for (const m of allMonths) {
+      const y = m.split("-")[0];
+      if (y) ys.add(y);
+    }
+    return Array.from(ys).sort();
+  }, [allMonths]);
+
+  // A single month selected => day-level views; otherwise month-level.
+  const specificMonth = slicer.month !== "all" ? slicer.month : null;
+  // Resolve Year + Month into the concrete month scope (null = all months).
+  const monthScope = useMemo<MonthKey[] | null>(() => {
+    if (slicer.month !== "all") return [slicer.month];
+    if (slicer.year !== "all")
+      return allMonths.filter((m) => m.startsWith(slicer.year + "-"));
+    return null;
+  }, [slicer.month, slicer.year, allMonths]);
+
   const filter: Filter = useMemo(
-    () => ({ month: slicer.month, asm: slicer.asm, pa: slicer.pa }),
-    [slicer]
+    () => ({ asm: slicer.asm, pa: slicer.pa, monthKeys: monthScope ?? undefined }),
+    [slicer.asm, slicer.pa, monthScope]
   );
 
-  // PA options cascade from the chosen Team Leader.
+  // Months used for Actual/Target/% rollups in the heatmap & lead-vs-target.
+  const summaryMonths = useMemo<MonthKey[]>(
+    () => monthScope ?? allMonths,
+    [monthScope, allMonths]
+  );
+
+  // PA options cascade from the chosen PATL (Team Leader).
   const pasForAsmFn = useMemo(() => {
     return (asm: string) => {
       if (!model) return [];
@@ -205,42 +272,36 @@ export function BiReportView() {
   );
   const scopedNU = useMemo(() => (model ? filteredNU(model, filter) : []), [model, filter]);
 
-  // KPI scope attainment
+  // KPI scope attainment — only over months that have a real Tar.Lead.
   const scopeAttainment = useMemo(() => {
     if (!model) return null;
-    const months =
-      filter.month && filter.month !== "all"
-        ? model.attainmentMonths.includes(filter.month)
-          ? [filter.month]
-          : []
-        : model.attainmentMonths;
+    const months = (monthScope ?? model.attainmentMonths).filter((m) =>
+      model.attainmentMonths.includes(m)
+    );
     let target = 0;
     let actual = 0;
     for (const m of months) {
       target += tarLeadForScopeMonth(model, filter, m);
-      actual += filteredDaily(model, { ...filter, month: m }).length;
+      actual += filteredDaily(model, { ...filter, monthKeys: [m] }).length;
     }
     return target > 0 ? (actual / target) * 100 : null;
-  }, [model, filter]);
+  }, [model, filter, monthScope]);
 
-  // monthly lead vs target
+  // Monthly lead vs target (Target = Tar.Lead only).
   const leadVsTarget = useMemo(() => {
     if (!model) return [];
-    const months = new Set<string>([...model.targetMonths, ...model.dailyMonths]);
-    return Array.from(months)
-      .sort()
+    return summaryMonths
       .map((m) => ({
         label: monthLabel(m).split(" ")[0],
-        Actual: filteredDaily(model, { ...filter, month: m }).length,
         Target: tarLeadForScopeMonth(model, filter, m),
+        Actual: filteredDaily(model, { ...filter, monthKeys: [m] }).length,
       }))
       .filter((r) => r.Actual > 0 || r.Target > 0);
-  }, [model, filter]);
+  }, [model, filter, summaryMonths]);
 
   // daily/monthly lead + NU trend
   const trend = useMemo(() => {
     if (!model) return [];
-    const specificMonth = filter.month && filter.month !== "all" ? filter.month : null;
     const map = new Map<string, { label: string; Leads: number; NU: number; sort: string }>();
     const keyFor = (d: Date | null, month: string): { key: string; label: string; sort: string } | null => {
       if (specificMonth) {
@@ -265,7 +326,7 @@ export function BiReportView() {
       map.set(k.key, e);
     }
     return Array.from(map.values()).sort((a, b) => a.sort.localeCompare(b.sort));
-  }, [model, scopedDaily, scopedNU, filter]);
+  }, [model, scopedDaily, scopedNU, specificMonth]);
 
   // by Team Leader
   const byTeamLeader = useMemo(() => {
@@ -320,10 +381,10 @@ export function BiReportView() {
       {/* DKSH-style header band */}
       <div className="-mx-4 mb-3 bg-gradient-to-r from-brand-700 to-brand-500 px-4 py-3 text-white">
         <div className="text-xs font-medium uppercase tracking-widest text-brand-100">
-          Performance Report
+          Lead Performance
         </div>
         <div className="text-lg font-bold leading-tight">
-          Product Ambassador — Lead &amp; New User
+          Product Ambassador — Lead Performance
         </div>
         <div className="text-[11px] text-brand-100">
           Abbott Nutrition · Similac · Ensure · Glucerna · Pediasure
@@ -335,19 +396,19 @@ export function BiReportView() {
       <CascadingSlicers
         state={slicer}
         onChange={setSlicer}
-        months={model.dailyMonths}
+        years={years}
+        months={allMonths}
         asms={model.asms}
         pasForAsm={pasForAsmFn}
       />
 
       {/* KPI strip */}
-      <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <KpiTile label="Leads" value={fmtInt(scopedDaily.length)} />
-        <KpiTile label="New Users" value={fmtInt(nuSummary.total)} />
         <KpiTile
           label="Attainment"
           value={scopeAttainment == null ? "n/a" : fmtPct(scopeAttainment)}
-          sub="target months"
+          sub="vs Tar.Lead"
         />
         <KpiTile
           label="PAs"
@@ -355,19 +416,17 @@ export function BiReportView() {
             slicer.pa !== "all" ? 1 : slicer.asm !== "all" ? pasForAsm(model, slicer.asm).length : model.pas.length
           )}
         />
-        <div className="col-span-3 sm:col-span-1">
-          <PlaceholderPanel title="Total IMS" />
-        </div>
+        <PlaceholderPanel title="Total IMS" />
       </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel title="Monthly Lead vs Target" hint="scoped to slicers">
+        <Panel title="Monthly Lead vs Target" hint="Target Lead = Tar.Lead only">
           <GroupedBarChart
             data={leadVsTarget}
             xKey="label"
             series={[
-              { key: "Target", name: "Tar.Lead", color: "#93c5fd" },
-              { key: "Actual", name: "Actual (daily)", color: "#1d4ed8" },
+              { key: "Target", name: "Target Lead", color: "#93c5fd" },
+              { key: "Actual", name: "Actual Lead", color: "#1d4ed8" },
             ]}
           />
         </Panel>
@@ -387,8 +446,17 @@ export function BiReportView() {
         </Panel>
       </div>
 
-      <Panel title="PA × Day Heatmap" hint="lead count · top 30 PAs" className="mt-3">
-        <HeatMap model={model} filter={filter} />
+      <Panel
+        title="PA × Day Heatmap"
+        hint="leads + Actual/Target/% · top 30 PAs"
+        className="mt-3"
+      >
+        <HeatMap
+          model={model}
+          filter={filter}
+          specificMonth={specificMonth}
+          summaryMonths={summaryMonths}
+        />
       </Panel>
 
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">

@@ -191,8 +191,22 @@ export function buildModel(
 
 export interface Filter {
   month?: MonthKey | "all";
+  /** When set, restricts to this set of month keys (takes precedence over
+   *  `month`). Used by the Year/Month cascade on the Lead Performance page. */
+  monthKeys?: MonthKey[];
   asm?: string | "all";
   pa?: string | "all";
+}
+
+/** Does a row's month pass the filter's month / monthKeys constraint? */
+function matchesMonth(filter: Filter, month: MonthKey): boolean {
+  if (filter.monthKeys && filter.monthKeys.length) {
+    return filter.monthKeys.includes(month);
+  }
+  if (filter.month && filter.month !== "all") {
+    return month === filter.month;
+  }
+  return true;
 }
 
 function matchesPa(model: DashboardModel, leadPa: string, filter: Filter): boolean {
@@ -220,7 +234,7 @@ export function countLeads(model: DashboardModel, filter: Filter = {}): number {
 export function filteredDaily(model: DashboardModel, filter: Filter = {}): DailyLead[] {
   const out: DailyLead[] = [];
   for (const d of model.daily) {
-    if (filter.month && filter.month !== "all" && d.month !== filter.month) continue;
+    if (!matchesMonth(filter, d.month)) continue;
     if (!matchesPa(model, d.paName, filter)) continue;
     out.push(d);
   }
@@ -336,7 +350,7 @@ export function filteredNU(model: DashboardModel, filter: Filter = {}): NURecord
       if (asm !== filter.asm) continue;
     }
     for (const r of recs) {
-      if (filter.month && filter.month !== "all" && r.month !== filter.month) continue;
+      if (!matchesMonth(filter, r.month)) continue;
       out.push(r);
     }
   }
