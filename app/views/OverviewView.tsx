@@ -11,8 +11,8 @@ import {
   tarLeadForPaMonth,
   targetLeadForPaMonth,
 } from "../lib/model";
-import { type MonthKey, monthLabel, normName } from "../lib/parse";
-import { fmtInt, fmtPct, fmtCompact } from "../lib/format";
+import { type MonthKey, monthLabel, normCode } from "../lib/parse";
+import { fmtInt, fmtPct } from "../lib/format";
 import { downloadCsv } from "../lib/csv";
 import { DataStatus, LoadingState } from "../components/DataStatus";
 import { AttainmentPill } from "../components/ui";
@@ -89,18 +89,15 @@ function MatrixCell({
   act,
   tar,
   pct,
-  money,
 }: {
   act: number;
   tar: number;
   pct: number | null;
-  money?: boolean;
 }) {
-  const f = money ? fmtCompact : fmtInt;
   return (
     <td className="whitespace-nowrap border-b border-l border-slate-100 px-1 py-0.5 text-center">
       <div className="tabular-nums text-slate-500">
-        {f(act)}/{f(tar)}
+        {fmtInt(act)}/{fmtInt(tar)}
       </div>
       <div
         className="mt-0.5 rounded font-semibold tabular-nums"
@@ -186,46 +183,52 @@ export function OverviewView() {
     return Array.from(new Set(ms)).sort();
   }, [slicer.years]);
 
-  // PA -> distinct store (outlet) names, from the Target tab.
-  const paStores = useMemo(() => {
-    const m = new Map<string, string[]>();
-    if (!model) return m;
-    for (const r of model.target.rows) {
-      if (!r.paName || !r.outlet) continue;
-      const k = normName(r.paName);
-      const arr = m.get(k) || [];
-      if (!arr.includes(r.outlet)) arr.push(r.outlet);
-      m.set(k, arr);
-    }
-    return m;
-  }, [model]);
-
-  // Monthly matrix: per PA, per month {lead act/tar/%, sales act/tar/%}.
+  // Monthly matrix — ONE ROW PER STORE (outlet), never merged. Everything is
+  // per-outlet from the Target tab + sales joined by Customer Code:
+  //   Lead Act = Act.Lead, Lead Tar = Tar.Lead (or Quali.Lead in March)
+  //   Sales Act = actual sales, Sales Tar = sales target (ex-VAT)
   const matrix = useMemo(() => {
     if (!model) return [];
-    const list = scopePas.map((p) => {
-      const cells = matrixMonths.map((m) => {
-        const la = leadsForPaMonth(model, p.name, m);
-        const lt = targetLeadForPaMonth(model, p.name, m);
-        const sa = salesForPa(model, p.name, [m]);
-        const st = salesTargetForPa(model, p.name, [m]);
+    const inScope = (r: { paName: string; asm: string }) => {
+      if (slicer.pas.length) return slicer.pas.includes(r.paName);
+      if (slicer.asms.length) return slicer.asms.includes(r.asm);
+      return true;
+    };
+    const list = model.target.rows
+      .filter((r) => (r.outlet || r.paName) && inScope(r))
+      .map((r) => {
+        const code = normCode(r.code);
+        const sAll = model.sales.byCodeMonth[code] || {};
+        const stAll = model.salesTarget.byCodeMonth[code] || {};
+        const cells = matrixMonths.map((m) => {
+          const cell = r.months[m];
+          const lt = cell?.tarLead ?? cell?.qualiLead ?? 0;
+          const la = cell?.actLead ?? 0;
+          const sa = sAll[m] || 0;
+          const st = stAll[m] || 0;
+          return {
+            la,
+            lt,
+            lp: lt > 0 ? (la / lt) * 100 : null,
+            sa,
+            st,
+            sp: st > 0 ? (sa / st) * 100 : null,
+          };
+        });
+        const totLeads = cells.reduce((s, c) => s + c.la, 0);
+        const totSales = cells.reduce((s, c) => s + c.sa, 0);
         return {
-          la,
-          lt,
-          lp: lt > 0 ? (la / lt) * 100 : null,
-          sa,
-          st,
-          sp: st > 0 ? (sa / st) * 100 : null,
+          store: r.outlet || "—",
+          name: r.paName || "—",
+          asm: r.asm,
+          cells,
+          totLeads,
+          totSales,
         };
       });
-      const totLeads = cells.reduce((s, c) => s + c.la, 0);
-      const totSales = cells.reduce((s, c) => s + c.sa, 0);
-      const store = (paStores.get(normName(p.name)) || []).join(", ");
-      return { name: p.name, asm: p.asm, store, cells, totLeads, totSales };
-    });
     list.sort((a, b) => b.totLeads - a.totLeads || b.totSales - a.totSales);
-    return list.slice(0, 150).map((r, i) => ({ ...r, rank: i + 1 }));
-  }, [model, scopePas, matrixMonths, paStores]);
+    return list.slice(0, 200).map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [model, slicer.pas, slicer.asms, matrixMonths]);
 
   // Per-PA rows, scoped by the slicers. Leads/NU/attainment respect the month
   // scope; actual sales are cumulative (no month dimension in the sales tab).
@@ -357,8 +360,8 @@ export function OverviewView() {
       {/* Monthly matrix: Rank · Store · PA, then per-month Lead & Sales vs Target */}
       <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
         <PanelHead
-          title="Monthly Lead & Sales vs Target by PA"
-          hint="per month: Lead and Sales (Act/Tar/%)"
+          title="Monthly Lead & Sales vs Target by Store"
+          hint="one row per store · Lead & Sales (Act/Tar/%)"
           exportName="overview-monthly-matrix"
           exportRows={() =>
             matrix.map((p) => {
@@ -390,7 +393,7 @@ export function OverviewView() {
                   rowSpan={2}
                   className="sticky left-0 top-0 z-40 border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500"
                 >
-                  # · PA · Store
+                  # · Store · PA · PATL
                 </th>
                 {matrixMonths.map((m) => (
                   <th
@@ -417,22 +420,22 @@ export function OverviewView() {
             </thead>
             <tbody>
               {matrix.map((p) => (
-                <tr key={p.name} className="align-middle">
+                <tr key={p.rank} className="align-middle">
                   <td
-                    className="sticky left-0 z-10 max-w-[170px] truncate border-b border-slate-100 bg-white px-2 py-1"
-                    title={`${p.name} · ${p.store}`}
+                    className="sticky left-0 z-10 max-w-[190px] truncate border-b border-slate-100 bg-white px-2 py-1"
+                    title={`${p.store} · ${p.name} · ${p.asm}`}
                   >
-                    <div className="font-medium text-slate-800">
-                      <span className="text-slate-400">#{p.rank}</span> {p.name}
+                    <div className="truncate font-medium text-slate-800">
+                      <span className="text-slate-400">#{p.rank}</span> {p.store}
                     </div>
-                    <div className="truncate text-[9px] text-slate-400">
-                      {p.store || "—"}
+                    <div className="truncate text-[9px] text-slate-500">
+                      {p.name} · <span className="text-brand-600">{p.asm}</span>
                     </div>
                   </td>
                   {p.cells.map((c, i) => (
                     <Fragment key={i}>
                       <MatrixCell act={c.la} tar={c.lt} pct={c.lp} />
-                      <MatrixCell act={c.sa} tar={c.st} pct={c.sp} money />
+                      <MatrixCell act={c.sa} tar={c.st} pct={c.sp} />
                     </Fragment>
                   ))}
                 </tr>
@@ -441,12 +444,13 @@ export function OverviewView() {
           </table>
         </div>
         <p className="mt-2 text-[11px] text-slate-400">
-          Each month shows <span className="font-medium text-brand-600">Lead</span>{" "}
-          and <span className="font-medium text-teal-700">Sales</span> as Act/Tar
-          with a % (
+          One row per store. Each month shows{" "}
+          <span className="font-medium text-brand-600">Lead</span> (Act.Lead /
+          Tar.Lead) and <span className="font-medium text-teal-700">Sales</span>{" "}
+          (actual / target) as Act/Tar with a % (
           <span className="font-medium text-emerald-700">green</span> ≥100%,{" "}
-          <span className="font-medium text-red-700">red</span> below). Ranked by
-          total leads. Top 150 PAs.
+          <span className="font-medium text-red-700">red</span> below). Sales
+          target is shown ex-VAT (−10%) to match actuals. Ranked by total Act.Lead.
         </p>
       </div>
 
