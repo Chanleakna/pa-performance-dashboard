@@ -1,0 +1,459 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useDashboardData } from "../lib/useData";
+import {
+  asmForPa,
+  filteredDaily,
+  filteredNU,
+  pasForAsm,
+  summarizeNU,
+  tarLeadForScopeMonth,
+  type DashboardModel,
+  type Filter,
+} from "../lib/model";
+import { monthLabel } from "../lib/parse";
+import { BRANDS } from "../lib/config";
+import { fmtInt, fmtPct } from "../lib/format";
+import { DataStatus, LoadingState } from "../components/DataStatus";
+import { CascadingSlicers, type SlicerState } from "../components/Slicers";
+import {
+  GroupedBarChart,
+  HorizontalLabeledBar,
+  LabeledBarChart,
+  DailyTrendChart,
+} from "../components/charts";
+
+// ---- small presentational helpers -------------------------------------------
+
+function Panel({
+  title,
+  hint,
+  children,
+  className = "",
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={"rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100 " + className}>
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** A clearly-marked placeholder for data that does NOT exist in these sheets. */
+function PlaceholderPanel({ title }: { title: string }) {
+  return (
+    <div className="flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-center">
+      <h3 className="text-sm font-semibold text-slate-500">{title}</h3>
+      <p className="mt-1 text-[11px] text-slate-400">
+        No IMS / Act.Sales data in the source sheets — placeholder.
+      </p>
+    </div>
+  );
+}
+
+function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+  return (
+    <div className="rounded-lg bg-brand-600 p-2.5 text-white">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-brand-100">
+        {label}
+      </div>
+      <div className="text-lg font-bold tabular-nums leading-tight">{value}</div>
+      {sub && <div className="text-[10px] text-brand-100">{sub}</div>}
+    </div>
+  );
+}
+
+// ---- heatmap -----------------------------------------------------------------
+
+function daysInMonth(monthKey: string): number {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+function HeatMap({ model, filter }: { model: DashboardModel; filter: Filter }) {
+  const { cols, rows } = useMemo(() => {
+    const daily = filteredDaily(model, filter);
+    const specificMonth = filter.month && filter.month !== "all" ? filter.month : null;
+
+    const cols: { key: string; label: string }[] = specificMonth
+      ? Array.from({ length: daysInMonth(specificMonth) }, (_, i) => ({
+          key: String(i + 1),
+          label: String(i + 1),
+        }))
+      : model.dailyMonths.map((m) => ({ key: m, label: monthLabel(m).split(" ")[0] }));
+
+    // rows = PAs in scope (cap to keep mobile memory low)
+    const byPa = new Map<string, Map<string, number>>();
+    for (const d of daily) {
+      if (!d.paName) continue;
+      const colKey = specificMonth
+        ? d.createdAt
+          ? String(d.createdAt.getDate())
+          : null
+        : d.month;
+      if (!colKey) continue;
+      let inner = byPa.get(d.paName);
+      if (!inner) {
+        inner = new Map();
+        byPa.set(d.paName, inner);
+      }
+      inner.set(colKey, (inner.get(colKey) || 0) + 1);
+    }
+
+    const rows = Array.from(byPa.entries())
+      .map(([pa, m]) => {
+        const total = Array.from(m.values()).reduce((a, b) => a + b, 0);
+        return { pa, m, total };
+      })
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 30);
+
+    return { cols, rows };
+  }, [model, filter]);
+
+  const max = useMemo(
+    () => rows.reduce((mx, r) => Math.max(mx, ...Array.from(r.m.values())), 1),
+    [rows]
+  );
+
+  if (rows.length === 0)
+    return <p className="py-6 text-center text-xs text-slate-400">No leads in scope.</p>;
+
+  return (
+    <div className="no-scrollbar overflow-x-auto">
+      <table className="border-separate border-spacing-0.5 text-[10px]">
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 bg-white pr-2 text-left font-medium text-slate-400">
+              PA
+            </th>
+            {cols.map((c) => (
+              <th key={c.key} className="px-0.5 font-medium text-slate-400">
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.pa}>
+              <td className="sticky left-0 z-10 max-w-[110px] truncate bg-white pr-2 text-slate-600">
+                {r.pa}
+              </td>
+              {cols.map((c) => {
+                const v = r.m.get(c.key) || 0;
+                const intensity = v === 0 ? 0 : 0.15 + 0.85 * (v / max);
+                return (
+                  <td
+                    key={c.key}
+                    title={`${r.pa} · ${c.label}: ${v}`}
+                    className="h-5 w-5 min-w-[20px] rounded text-center text-[9px] text-white"
+                    style={{
+                      backgroundColor: v === 0 ? "#f1f5f9" : `rgba(37, 99, 235, ${intensity})`,
+                      color: intensity > 0.5 ? "#fff" : "#1e3a8a",
+                    }}
+                  >
+                    {v || ""}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---- main view ---------------------------------------------------------------
+
+export function BiReportView() {
+  const data = useDashboardData();
+  const { model } = data;
+  const [slicer, setSlicer] = useState<SlicerState>({
+    month: "all",
+    asm: "all",
+    pa: "all",
+  });
+
+  const filter: Filter = useMemo(
+    () => ({ month: slicer.month, asm: slicer.asm, pa: slicer.pa }),
+    [slicer]
+  );
+
+  // PA options cascade from the chosen Team Leader.
+  const pasForAsmFn = useMemo(() => {
+    return (asm: string) => {
+      if (!model) return [];
+      const list = asm === "all" ? model.pas : pasForAsm(model, asm);
+      return list.map((p) => p.name);
+    };
+  }, [model]);
+
+  const scopedDaily = useMemo(
+    () => (model ? filteredDaily(model, filter) : []),
+    [model, filter]
+  );
+  const scopedNU = useMemo(() => (model ? filteredNU(model, filter) : []), [model, filter]);
+
+  // KPI scope attainment
+  const scopeAttainment = useMemo(() => {
+    if (!model) return null;
+    const months =
+      filter.month && filter.month !== "all"
+        ? model.attainmentMonths.includes(filter.month)
+          ? [filter.month]
+          : []
+        : model.attainmentMonths;
+    let target = 0;
+    let actual = 0;
+    for (const m of months) {
+      target += tarLeadForScopeMonth(model, filter, m);
+      actual += filteredDaily(model, { ...filter, month: m }).length;
+    }
+    return target > 0 ? (actual / target) * 100 : null;
+  }, [model, filter]);
+
+  // monthly lead vs target
+  const leadVsTarget = useMemo(() => {
+    if (!model) return [];
+    const months = new Set<string>([...model.targetMonths, ...model.dailyMonths]);
+    return Array.from(months)
+      .sort()
+      .map((m) => ({
+        label: monthLabel(m).split(" ")[0],
+        Actual: filteredDaily(model, { ...filter, month: m }).length,
+        Target: tarLeadForScopeMonth(model, filter, m),
+      }))
+      .filter((r) => r.Actual > 0 || r.Target > 0);
+  }, [model, filter]);
+
+  // daily/monthly lead + NU trend
+  const trend = useMemo(() => {
+    if (!model) return [];
+    const specificMonth = filter.month && filter.month !== "all" ? filter.month : null;
+    const map = new Map<string, { label: string; Leads: number; NU: number; sort: string }>();
+    const keyFor = (d: Date | null, month: string): { key: string; label: string; sort: string } | null => {
+      if (specificMonth) {
+        if (!d) return null;
+        const day = d.getDate();
+        return { key: `${month}-${day}`, label: String(day), sort: String(day).padStart(2, "0") };
+      }
+      return { key: month, label: monthLabel(month).split(" ")[0], sort: month };
+    };
+    for (const d of scopedDaily) {
+      const k = keyFor(d.createdAt, d.month);
+      if (!k) continue;
+      const e = map.get(k.key) || { label: k.label, Leads: 0, NU: 0, sort: k.sort };
+      e.Leads++;
+      map.set(k.key, e);
+    }
+    for (const r of scopedNU) {
+      const k = keyFor(r.date, r.month);
+      if (!k) continue;
+      const e = map.get(k.key) || { label: k.label, Leads: 0, NU: 0, sort: k.sort };
+      e.NU++;
+      map.set(k.key, e);
+    }
+    return Array.from(map.values()).sort((a, b) => a.sort.localeCompare(b.sort));
+  }, [model, scopedDaily, scopedNU, filter]);
+
+  // by Team Leader
+  const byTeamLeader = useMemo(() => {
+    if (!model) return [];
+    const leadByAsm = new Map<string, number>();
+    for (const d of scopedDaily) {
+      const asm = asmForPa(model, d.paName);
+      leadByAsm.set(asm, (leadByAsm.get(asm) || 0) + 1);
+    }
+    const nuByAsm = new Map<string, number>();
+    for (const r of scopedNU) {
+      // Re-derive the team leader from the Contact-ID name (filteredNU is flat).
+      const asm = asmForPa(model, r.contactId);
+      nuByAsm.set(asm, (nuByAsm.get(asm) || 0) + 1);
+    }
+    const keys = new Set<string>([...leadByAsm.keys(), ...nuByAsm.keys()]);
+    return Array.from(keys)
+      .map((asm) => ({ asm, Leads: leadByAsm.get(asm) || 0, NU: nuByAsm.get(asm) || 0 }))
+      .sort((a, b) => b.Leads - a.Leads);
+  }, [model, scopedDaily, scopedNU]);
+
+  const byProduct = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of scopedDaily) {
+      const p = d.product || "—";
+      m.set(p, (m.get(p) || 0) + 1);
+    }
+    return Array.from(m.entries())
+      .map(([name, leads]) => ({ name, leads }))
+      .sort((a, b) => b.leads - a.leads)
+      .slice(0, 12);
+  }, [scopedDaily]);
+
+  const byCustomer = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of scopedDaily) {
+      const c = d.outlet || "—";
+      m.set(c, (m.get(c) || 0) + 1);
+    }
+    return Array.from(m.entries())
+      .map(([name, leads]) => ({ name, leads }))
+      .sort((a, b) => b.leads - a.leads)
+      .slice(0, 15);
+  }, [scopedDaily]);
+
+  const nuSummary = useMemo(() => summarizeNU(scopedNU), [scopedNU]);
+
+  if (!model) return <LoadingState />;
+
+  return (
+    <div>
+      {/* DKSH-style header band */}
+      <div className="-mx-4 mb-3 bg-gradient-to-r from-brand-700 to-brand-500 px-4 py-3 text-white">
+        <div className="text-xs font-medium uppercase tracking-widest text-brand-100">
+          Performance Report
+        </div>
+        <div className="text-lg font-bold leading-tight">
+          Product Ambassador — Lead &amp; New User
+        </div>
+        <div className="text-[11px] text-brand-100">
+          Abbott Nutrition · Similac · Ensure · Glucerna · Pediasure
+        </div>
+      </div>
+
+      <DataStatus data={data} />
+
+      <CascadingSlicers
+        state={slicer}
+        onChange={setSlicer}
+        months={model.dailyMonths}
+        asms={model.asms}
+        pasForAsm={pasForAsmFn}
+      />
+
+      {/* KPI strip */}
+      <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+        <KpiTile label="Leads" value={fmtInt(scopedDaily.length)} />
+        <KpiTile label="New Users" value={fmtInt(nuSummary.total)} />
+        <KpiTile
+          label="Attainment"
+          value={scopeAttainment == null ? "n/a" : fmtPct(scopeAttainment)}
+          sub="target months"
+        />
+        <KpiTile
+          label="PAs"
+          value={fmtInt(
+            slicer.pa !== "all" ? 1 : slicer.asm !== "all" ? pasForAsm(model, slicer.asm).length : model.pas.length
+          )}
+        />
+        <div className="col-span-3 sm:col-span-1">
+          <PlaceholderPanel title="Total IMS" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Panel title="Monthly Lead vs Target" hint="scoped to slicers">
+          <GroupedBarChart
+            data={leadVsTarget}
+            xKey="label"
+            series={[
+              { key: "Target", name: "Tar.Lead", color: "#93c5fd" },
+              { key: "Actual", name: "Actual (daily)", color: "#1d4ed8" },
+            ]}
+          />
+        </Panel>
+
+        <Panel
+          title="Lead & NU Trend"
+          hint={slicer.month === "all" ? "by month" : "by day"}
+        >
+          <DailyTrendChart
+            data={trend}
+            xKey="label"
+            barKey="Leads"
+            lineKey="NU"
+            barName="Leads"
+            lineName="New Users"
+          />
+        </Panel>
+      </div>
+
+      <Panel title="PA × Day Heatmap" hint="lead count · top 30 PAs" className="mt-3">
+        <HeatMap model={model} filter={filter} />
+      </Panel>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Panel title="Lead & NU by Team Leader">
+          <GroupedBarChart
+            data={byTeamLeader}
+            xKey="asm"
+            series={[
+              { key: "Leads", name: "Leads", color: "#2563eb" },
+              { key: "NU", name: "New Users", color: "#14b8a6" },
+            ]}
+          />
+        </Panel>
+
+        <Panel title="New Users by Brand">
+          <LabeledBarChart
+            data={BRANDS.map((b) => ({ brand: b, nu: nuSummary.byBrand[b] || 0 }))}
+            dataKey="nu"
+            xKey="brand"
+            color="#0ea5e9"
+            valueFormatter={(v) => fmtInt(v)}
+          />
+        </Panel>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <Panel title="Leads by Product" hint="from daily Product column">
+          <HorizontalLabeledBar
+            data={byProduct}
+            dataKey="leads"
+            yKey="name"
+            height={Math.max(160, byProduct.length * 26)}
+            valueFormatter={(v) => fmtInt(v)}
+          />
+        </Panel>
+
+        <Panel title="Leads by Customer" hint="top 15 outlets (Full Name)">
+          <HorizontalLabeledBar
+            data={byCustomer}
+            dataKey="leads"
+            yKey="name"
+            height={Math.max(160, byCustomer.length * 24)}
+            valueFormatter={(v) => fmtInt(v)}
+          />
+        </Panel>
+      </div>
+
+      {/* IMS / Act.Sales placeholders — these metrics do NOT exist in source */}
+      <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-500">
+        IMS / Act.Sales (not in source data)
+      </h3>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <PlaceholderPanel title="Act.Sales / Lead" />
+        <PlaceholderPanel title="Act.Sales / PA" />
+        <PlaceholderPanel title="IMS by Product" />
+        <PlaceholderPanel title="IMS / Lead" />
+        <PlaceholderPanel title="IMS by Customer" />
+        <PlaceholderPanel title="Total IMS" />
+      </div>
+
+      <p className="mt-4 text-[11px] text-slate-400">
+        Attainment uses target months only (Jan/Feb/Apr 2026); March shows in
+        lead views but has no Tar.Lead. NU joins to PAs via Contact ID
+        (~{fmtPct(model.nuMatchRate * 100)} matched; the rest are Unassigned).
+      </p>
+    </div>
+  );
+}
