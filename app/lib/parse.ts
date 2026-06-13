@@ -72,21 +72,40 @@ const MONTH_ABBR = [
 ];
 
 /**
- * Month key from a header cell. Handles ISO ("2026-03-26"), day-first
- * ("26/03/2026"), and month-name forms ("Mar 2026", "Mar-26", "March 2026").
+ * Month key from a header cell — STRICT parsing only. Handles ISO
+ * ("2026-03-26"), month-name ("Mar 2026", "Mar-26", "March '26"), and numeric
+ * d/m/y or m/y forms. Deliberately does NOT fall back to `new Date()` because
+ * the engine misreads things like "Jan-26" as 26 Jan 2001, which would scatter
+ * months across bogus years (e.g. 2000/2001).
  */
 function monthKeyFromHeaderCell(raw: string): MonthKey | null {
-  const d = parseDayFirst(raw);
-  if (d) return monthKeyFromDate(d);
-  const m = raw
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const mk = (year: number, month: number): MonthKey | null =>
+    month >= 1 && month <= 12 ? `${year}-${String(month).padStart(2, "0")}` : null;
+  const fullYear = (y: number) => (y < 100 ? y + 2000 : y);
+
+  // ISO: 2026-01 or 2026-01-26
+  const iso = s.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/);
+  if (iso) return mk(Number(iso[1]), Number(iso[2]));
+
+  // Month name + year: "Jan-26", "Jan 2026", "January '26", "Sept-26"
+  const mn = s
     .toLowerCase()
-    .match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/]*['"]?(\d{2,4})/);
-  if (m) {
-    const idx = MONTH_ABBR.indexOf(m[1]);
-    let y = Number(m[2]);
-    if (y < 100) y += 2000;
-    if (idx >= 0) return `${y}-${String(idx + 1).padStart(2, "0")}`;
+    .match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\-/.]*['"]?(\d{2,4})/);
+  if (mn) {
+    const idx = MONTH_ABBR.indexOf(mn[1]);
+    if (idx >= 0) return mk(fullYear(Number(mn[2])), idx + 1);
   }
+
+  // Day-first numeric with full separators: 26/01/2026, 26-01-26
+  const dmy = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
+  if (dmy) return mk(fullYear(Number(dmy[3])), Number(dmy[2]));
+
+  // Month/Year only: "01/2026", "1/26"
+  const my = s.match(/^(\d{1,2})[\/.\-](\d{2,4})$/);
+  if (my) return mk(fullYear(Number(my[2])), Number(my[1]));
+
   return null;
 }
 
