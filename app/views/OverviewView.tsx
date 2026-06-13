@@ -226,9 +226,38 @@ export function OverviewView() {
           totSales,
         };
       });
-    list.sort((a, b) => b.totLeads - a.totLeads || b.totSales - a.totSales);
-    return list.slice(0, 200).map((r, i) => ({ ...r, rank: i + 1 }));
+    return list;
   }, [model, slicer.pas, slicer.asms, matrixMonths]);
+
+  // Matrix sorting. Key: "name" | "totLead" | "totSales" | "lead:idx" | "sales:idx".
+  const [mSort, setMSort] = useState("totLead");
+  const [mAsc, setMAsc] = useState(false);
+  const sortedMatrix = useMemo(() => {
+    const dir = mAsc ? 1 : -1;
+    const [type, idxStr] = mSort.split(":");
+    const idx = Number(idxStr);
+    const val = (r: (typeof matrix)[number]) => {
+      if (type === "name") return null;
+      if (type === "totLead") return r.totLeads;
+      if (type === "totSales") return r.totSales;
+      if (type === "lead") return r.cells[idx]?.la ?? -1;
+      if (type === "sales") return r.cells[idx]?.sa ?? -1;
+      return 0;
+    };
+    const arr = [...matrix].sort((a, b) => {
+      if (type === "name") return a.store.localeCompare(b.store) * dir;
+      return ((val(a) as number) - (val(b) as number)) * dir;
+    });
+    return arr.slice(0, 200).map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [matrix, mSort, mAsc]);
+
+  const setMatrixSort = (k: string) => {
+    if (k === mSort) setMAsc((v) => !v);
+    else {
+      setMSort(k);
+      setMAsc(k === "name");
+    }
+  };
 
   // Per-PA rows, scoped by the slicers. Leads/NU/attainment respect the month
   // scope; actual sales are cumulative (no month dimension in the sales tab).
@@ -301,6 +330,27 @@ export function OverviewView() {
       .sort((x, y) => y.sales - x.sales);
   }, [model, rows, monthScope]);
 
+  // Team Leader summary sorting.
+  type AsmSort = "asm" | "paCount" | "leads" | "nu" | "attainment" | "sales";
+  const [aSort, setASort] = useState<AsmSort>("sales");
+  const [aAsc, setAAsc] = useState(false);
+  const sortedAsmRows = useMemo(() => {
+    const dir = aAsc ? 1 : -1;
+    return [...asmRows].sort((a, b) => {
+      if (aSort === "asm") return a.asm.localeCompare(b.asm) * dir;
+      const av = (a[aSort] as number | null) ?? -1;
+      const bv = (b[aSort] as number | null) ?? -1;
+      return (av - bv) * dir;
+    });
+  }, [asmRows, aSort, aAsc]);
+  const setAsmSort = (k: AsmSort) => {
+    if (k === aSort) setAAsc((v) => !v);
+    else {
+      setASort(k);
+      setAAsc(k === "asm");
+    }
+  };
+
   const sortedPas = useMemo(() => {
     const filtered = rows.filter(
       (p) => !q || p.name.toLowerCase().includes(q) || p.asm.toLowerCase().includes(q)
@@ -364,7 +414,7 @@ export function OverviewView() {
           hint="one row per store · Lead & Sales (Act/Tar/%)"
           exportName="overview-monthly-matrix"
           exportRows={() =>
-            matrix.map((p) => {
+            sortedMatrix.map((p) => {
               const out: Record<string, unknown> = {
                 Rank: p.rank,
                 Store: p.store,
@@ -391,9 +441,11 @@ export function OverviewView() {
               <tr>
                 <th
                   rowSpan={2}
-                  className="sticky left-0 top-0 z-40 border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500"
+                  onClick={() => setMatrixSort("name")}
+                  className="sticky left-0 top-0 z-40 cursor-pointer select-none border-b border-slate-200 bg-white px-2 py-1 text-left font-medium text-slate-500 hover:text-brand-700"
                 >
                   # · Store · PA · PATL
+                  {mSort === "name" ? (mAsc ? " ▲" : " ▼") : " ↕"}
                 </th>
                 {matrixMonths.map((m) => (
                   <th
@@ -406,20 +458,26 @@ export function OverviewView() {
                 ))}
               </tr>
               <tr>
-                {matrixMonths.map((m) => (
+                {matrixMonths.map((m, i) => (
                   <Fragment key={m}>
-                    <th className="sticky top-[25px] z-20 border-b border-l border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-brand-600">
-                      Lead
+                    <th
+                      onClick={() => setMatrixSort(`lead:${i}`)}
+                      className="sticky top-[25px] z-20 cursor-pointer select-none border-b border-l border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-brand-600 hover:bg-brand-50"
+                    >
+                      Lead{mSort === `lead:${i}` ? (mAsc ? " ▲" : " ▼") : ""}
                     </th>
-                    <th className="sticky top-[25px] z-20 border-b border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-teal-700">
-                      Sales
+                    <th
+                      onClick={() => setMatrixSort(`sales:${i}`)}
+                      className="sticky top-[25px] z-20 cursor-pointer select-none border-b border-slate-200 bg-white px-1 py-0.5 text-center font-medium text-teal-700 hover:bg-teal-50"
+                    >
+                      Sales{mSort === `sales:${i}` ? (mAsc ? " ▲" : " ▼") : ""}
                     </th>
                   </Fragment>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {matrix.map((p) => (
+              {sortedMatrix.map((p) => (
                 <tr key={p.rank} className="align-middle">
                   <td
                     className="sticky left-0 z-10 max-w-[190px] truncate border-b border-slate-100 bg-white px-2 py-1"
@@ -473,16 +531,32 @@ export function OverviewView() {
         <table className="w-full text-sm">
           <thead className="border-b border-slate-100 text-xs">
             <tr>
-              <th className="px-2 py-2 text-left font-medium text-slate-500">Team Leader</th>
-              <th className="px-2 py-2 text-right font-medium text-slate-500">PAs</th>
-              <th className="px-2 py-2 text-right font-medium text-slate-500">Leads</th>
-              <th className="px-2 py-2 text-right font-medium text-slate-500">NU</th>
-              <th className="px-2 py-2 text-right font-medium text-slate-500">Attain.</th>
-              <th className="px-2 py-2 text-right font-medium text-slate-500">Actual Sales</th>
+              {(
+                [
+                  ["asm", "Team Leader", false],
+                  ["paCount", "PAs", true],
+                  ["leads", "Leads", true],
+                  ["nu", "NU", true],
+                  ["attainment", "Attain.", true],
+                  ["sales", "Actual Sales", true],
+                ] as [AsmSort, string, boolean][]
+              ).map(([k, label, right]) => (
+                <th
+                  key={k}
+                  onClick={() => setAsmSort(k)}
+                  className={
+                    "cursor-pointer select-none px-2 py-2 font-medium text-slate-500 hover:text-brand-700 " +
+                    (right ? "text-right" : "text-left")
+                  }
+                >
+                  {label}
+                  {aSort === k && <span className="ml-0.5 text-brand-600">{aAsc ? "▲" : "▼"}</span>}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {asmRows.map((r) => (
+            {sortedAsmRows.map((r) => (
               <tr key={r.asm} className="border-b border-slate-50 last:border-0">
                 <td className="px-2 py-2 font-medium text-slate-800">{r.asm}</td>
                 <td className="px-2 py-2 text-right tabular-nums text-slate-500">{r.paCount}</td>

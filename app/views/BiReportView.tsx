@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useDashboardData } from "../lib/useData";
 import {
   filteredDaily,
@@ -182,30 +182,57 @@ function HeatMap({
     () => computeHeatmapData(model, filter, summaryMonths),
     [model, filter, summaryMonths]
   );
+  const [sortKey, setSortKey] = useState<"pa" | "act" | "pct">("act");
+  const [asc, setAsc] = useState(false);
+  const sortedRows = useMemo(() => {
+    const dir = asc ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortKey === "pa") return a.pa.localeCompare(b.pa) * dir;
+      if (sortKey === "pct") return (nullable(a.pct) - nullable(b.pct)) * dir;
+      return (a.actual - b.actual) * dir;
+    });
+  }, [rows, sortKey, asc]);
 
   if (rows.length === 0)
     return <p className="py-6 text-center text-xs text-slate-400">No leads in scope.</p>;
+
+  const setSort = (k: "pa" | "act" | "pct") => {
+    if (k === sortKey) setAsc((v) => !v);
+    else {
+      setSortKey(k);
+      setAsc(k === "pa");
+    }
+  };
+  const hd = "sticky top-0 z-20 cursor-pointer select-none bg-white px-1 text-right font-semibold text-slate-500 hover:text-brand-700";
 
   return (
     <div className="no-scrollbar max-h-[70vh] overflow-auto">
       <table className="border-separate border-spacing-0.5 text-[10px]">
         <thead>
           <tr>
-            <th className="sticky left-0 top-0 z-30 bg-white pr-2 text-left font-medium text-slate-400">
+            <th
+              onClick={() => setSort("pa")}
+              className="sticky left-0 top-0 z-30 cursor-pointer select-none bg-white pr-2 text-left font-medium text-slate-400 hover:text-brand-700"
+            >
               # · PA · Store
+              <SortCaret active={sortKey === "pa"} asc={asc} />
             </th>
             {cols.map((c) => (
               <th key={c.key} className="sticky top-0 z-20 bg-white px-0.5 font-medium text-slate-400">
                 {c.label}
               </th>
             ))}
-            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Act</th>
+            <th onClick={() => setSort("act")} className={hd}>
+              Act<SortCaret active={sortKey === "act"} asc={asc} />
+            </th>
             <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">Day&nbsp;Tgt</th>
-            <th className="sticky top-0 z-20 bg-white px-1 text-right font-semibold text-slate-500">%</th>
+            <th onClick={() => setSort("pct")} className={hd}>
+              %<SortCaret active={sortKey === "pct"} asc={asc} />
+            </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, ri) => {
+          {sortedRows.map((r, ri) => {
             const dt = r.dailyTarget;
             return (
             <tr key={r.pa}>
@@ -293,6 +320,31 @@ function attainStyle(pct: number | null): React.CSSProperties {
     backgroundColor: `rgba(220, 38, 38, ${0.18 + 0.62 * i})`,
     color: i > 0.5 ? "#fff" : "#7f1d1d",
   };
+}
+
+/** Inner content of an attainment cell: % on top, Actual/Target beneath. */
+function attainCell(pct: number | null, a: number, t: number) {
+  return t > 0 ? (
+    <div className="leading-tight">
+      <div className="font-semibold">{Math.round(pct as number)}%</div>
+      <div className="text-[9px] opacity-80">
+        {fmtInt(a)}/{fmtInt(t)}
+      </div>
+    </div>
+  ) : (
+    "—"
+  );
+}
+
+/** Sort key for the attainment heatmaps: name, grand total, or a month index. */
+type AttSort = "name" | "total" | number;
+function nullable(v: number | null): number {
+  return v == null ? -1 : v;
+}
+/** Little ▲/▼ indicator. */
+function SortCaret({ active, asc }: { active: boolean; asc: boolean }) {
+  if (!active) return <span className="ml-0.5 text-slate-300">↕</span>;
+  return <span className="ml-0.5 text-brand-600">{asc ? "▲" : "▼"}</span>;
 }
 
 /** Combined attainment % for a set of PAs over months (Σactual ÷ Σtarget). */
@@ -413,6 +465,18 @@ function AttainmentHeatmap({
     () => computeAttainmentData(model, pas, months),
     [model, pas, months]
   );
+  const [sortKey, setSortKey] = useState<AttSort>("total");
+  const [asc, setAsc] = useState(false);
+
+  const sortedRows = useMemo(() => {
+    const dir = asc ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sortKey === "name") return a.name.localeCompare(b.name) * dir;
+      const av = sortKey === "total" ? a.pctTot : a.cells[sortKey].pct;
+      const bv = sortKey === "total" ? b.pctTot : b.cells[sortKey].pct;
+      return (nullable(av) - nullable(bv)) * dir;
+    });
+  }, [rows, sortKey, asc]);
 
   if (months.length === 0)
     return (
@@ -421,37 +485,42 @@ function AttainmentHeatmap({
       </p>
     );
 
+  const setSort = (k: AttSort) => {
+    if (k === sortKey) setAsc((v) => !v);
+    else {
+      setSortKey(k);
+      setAsc(k === "name");
+    }
+  };
   const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
+  const headCls = cellCls + " sticky top-0 z-20 cursor-pointer select-none bg-white font-medium hover:text-brand-700";
   const nameBody =
     "sticky left-0 z-10 max-w-[150px] truncate bg-white px-1.5 py-1 text-left";
-  // Each cell shows attainment %, with Actual/Target absolute numbers beneath.
-  const cellBody = (pct: number | null, a: number, t: number) =>
-    t > 0 ? (
-      <div className="leading-tight">
-        <div className="font-semibold">{Math.round(pct as number)}%</div>
-        <div className="text-[9px] opacity-80">
-          {fmtInt(a)}/{fmtInt(t)}
-        </div>
-      </div>
-    ) : (
-      "—"
-    );
 
   return (
     <div className="no-scrollbar max-h-[70vh] overflow-auto">
       <table className="border-separate border-spacing-0.5 text-[11px]">
         <thead>
           <tr className="text-slate-400">
-            <th className="sticky left-0 top-0 z-30 bg-white px-1.5 py-1 text-left font-medium">
+            <th
+              onClick={() => setSort("name")}
+              className="sticky left-0 top-0 z-30 cursor-pointer select-none bg-white px-1.5 py-1 text-left font-medium hover:text-brand-700"
+            >
               # · PA · Store
+              <SortCaret active={sortKey === "name"} asc={asc} />
             </th>
-            {months.map((m) => (
-              <th key={m} className={cellCls + " sticky top-0 z-20 bg-white font-medium"}>
+            {months.map((m, i) => (
+              <th key={m} onClick={() => setSort(i)} className={headCls}>
                 {monthLabel(m).replace(" 20", " '")}
+                <SortCaret active={sortKey === i} asc={asc} />
               </th>
             ))}
-            <th className={cellCls + " sticky top-0 z-20 bg-white font-semibold text-slate-500"}>
+            <th
+              onClick={() => setSort("total")}
+              className={headCls + " font-semibold text-slate-500"}
+            >
               Total
+              <SortCaret active={sortKey === "total"} asc={asc} />
             </th>
           </tr>
         </thead>
@@ -461,14 +530,14 @@ function AttainmentHeatmap({
             <td className={nameBody + " text-amber-800"}>Total (all PAs)</td>
             {totalsByMonth.map((t, i) => (
               <td key={i} className={cellCls} style={attainStyle(t.pct)}>
-                {cellBody(t.pct, t.a, t.t)}
+                {attainCell(t.pct, t.a, t.t)}
               </td>
             ))}
             <td className={cellCls} style={attainStyle(grand.pct)}>
-              {cellBody(grand.pct, grand.a, grand.t)}
+              {attainCell(grand.pct, grand.a, grand.t)}
             </td>
           </tr>
-          {rows.map((r, ri) => (
+          {sortedRows.map((r, ri) => (
             <tr key={r.name}>
               <td className={nameBody} title={`${r.name} · ${r.asm} · ${storesForPa(model, r.name)}`}>
                 <div className="text-slate-700">
@@ -480,11 +549,11 @@ function AttainmentHeatmap({
               </td>
               {r.cells.map((c, i) => (
                 <td key={i} className={cellCls} style={attainStyle(c.pct)}>
-                  {cellBody(c.pct, c.a, c.t)}
+                  {attainCell(c.pct, c.a, c.t)}
                 </td>
               ))}
               <td className={cellCls + " font-medium"} style={attainStyle(r.pctTot)}>
-                {cellBody(r.pctTot, r.aTot, r.tTot)}
+                {attainCell(r.pctTot, r.aTot, r.tTot)}
               </td>
             </tr>
           ))}
@@ -497,6 +566,173 @@ function AttainmentHeatmap({
         above target (≥100%); <span className="font-medium text-red-700">red</span> =
         below. All target months are shown (Year/PATL/PA still filter); March uses
         its Quali.Lead as target. Top row is all PAs combined.
+      </p>
+    </div>
+  );
+}
+
+// ---- % Attainment by PATL (monthly heatmap, expand a team to its PAs) --------
+
+function AttainmentByPatl({
+  model,
+  teams,
+  months,
+}: {
+  model: DashboardModel;
+  teams: [string, { name: string; asm: string }[]][];
+  months: MonthKey[];
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sortKey, setSortKey] = useState<AttSort>("total");
+  const [asc, setAsc] = useState(false);
+
+  const teamRows = useMemo(() => {
+    return teams.map(([asm, pas]) => {
+      const monthCells = months.map((m) => {
+        let a = 0;
+        let t = 0;
+        for (const p of pas) {
+          const tt = targetLeadForPaMonth(model, p.name, m);
+          if (tt > 0) {
+            t += tt;
+            a += leadsForPaMonth(model, p.name, m);
+          }
+        }
+        return { a, t, pct: t > 0 ? (a / t) * 100 : null };
+      });
+      let A = 0;
+      let T = 0;
+      for (const c of monthCells) {
+        A += c.a;
+        T += c.t;
+      }
+      return {
+        asm,
+        pas,
+        paCount: pas.length,
+        monthCells,
+        total: { a: A, t: T, pct: T > 0 ? (A / T) * 100 : null },
+      };
+    });
+  }, [model, teams, months]);
+
+  const sorted = useMemo(() => {
+    const dir = asc ? 1 : -1;
+    return [...teamRows].sort((a, b) => {
+      if (sortKey === "name") return a.asm.localeCompare(b.asm) * dir;
+      const av = sortKey === "total" ? a.total.pct : a.monthCells[sortKey].pct;
+      const bv = sortKey === "total" ? b.total.pct : b.monthCells[sortKey].pct;
+      return (nullable(av) - nullable(bv)) * dir;
+    });
+  }, [teamRows, sortKey, asc]);
+
+  if (months.length === 0)
+    return (
+      <p className="py-6 text-center text-xs text-slate-400">
+        No target months in scope.
+      </p>
+    );
+
+  const setSort = (k: AttSort) => {
+    if (k === sortKey) setAsc((v) => !v);
+    else {
+      setSortKey(k);
+      setAsc(k === "name");
+    }
+  };
+  const toggle = (asm: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      n.has(asm) ? n.delete(asm) : n.add(asm);
+      return n;
+    });
+
+  const cellCls = "whitespace-nowrap rounded px-1.5 py-1 text-right tabular-nums";
+  const headCls =
+    cellCls + " sticky top-0 z-20 cursor-pointer select-none bg-white font-medium hover:text-brand-700";
+  const nameBody = "sticky left-0 z-10 max-w-[170px] truncate bg-white px-1.5 py-1 text-left";
+
+  return (
+    <div className="no-scrollbar max-h-[70vh] overflow-auto">
+      <table className="border-separate border-spacing-0.5 text-[11px]">
+        <thead>
+          <tr className="text-slate-400">
+            <th
+              onClick={() => setSort("name")}
+              className="sticky left-0 top-0 z-30 cursor-pointer select-none bg-white px-1.5 py-1 text-left font-medium hover:text-brand-700"
+            >
+              Team Leader
+              <SortCaret active={sortKey === "name"} asc={asc} />
+            </th>
+            {months.map((m, i) => (
+              <th key={m} onClick={() => setSort(i)} className={headCls}>
+                {monthLabel(m).replace(" 20", " '")}
+                <SortCaret active={sortKey === i} asc={asc} />
+              </th>
+            ))}
+            <th
+              onClick={() => setSort("total")}
+              className={headCls + " font-semibold text-slate-500"}
+            >
+              Total
+              <SortCaret active={sortKey === "total"} asc={asc} />
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((tr) => (
+            <Fragment key={tr.asm}>
+              <tr
+                className="cursor-pointer font-semibold hover:bg-slate-50"
+                onClick={() => toggle(tr.asm)}
+              >
+                <td className={nameBody + " text-slate-800"}>
+                  <span className="mr-1 text-slate-400">
+                    {expanded.has(tr.asm) ? "▼" : "▶"}
+                  </span>
+                  {tr.asm}{" "}
+                  <span className="text-[9px] font-normal text-slate-400">
+                    ({tr.paCount})
+                  </span>
+                </td>
+                {tr.monthCells.map((c, i) => (
+                  <td key={i} className={cellCls} style={attainStyle(c.pct)}>
+                    {attainCell(c.pct, c.a, c.t)}
+                  </td>
+                ))}
+                <td className={cellCls} style={attainStyle(tr.total.pct)}>
+                  {attainCell(tr.total.pct, tr.total.a, tr.total.t)}
+                </td>
+              </tr>
+              {expanded.has(tr.asm) &&
+                computeAttainmentData(model, tr.pas, months).rows.map((r) => (
+                  <tr key={tr.asm + "/" + r.name}>
+                    <td
+                      className={nameBody + " bg-slate-50"}
+                      title={`${r.name} · ${storesForPa(model, r.name)}`}
+                    >
+                      <div className="pl-4 text-slate-700">{r.name}</div>
+                      <div className="truncate pl-4 text-[9px] text-slate-400">
+                        {storesForPa(model, r.name) || "—"}
+                      </div>
+                    </td>
+                    {r.cells.map((c, i) => (
+                      <td key={i} className={cellCls} style={attainStyle(c.pct)}>
+                        {attainCell(c.pct, c.a, c.t)}
+                      </td>
+                    ))}
+                    <td className={cellCls + " font-medium"} style={attainStyle(r.pctTot)}>
+                      {attainCell(r.pctTot, r.aTot, r.tTot)}
+                    </td>
+                  </tr>
+                ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-[11px] text-slate-400">
+        Team attainment % per month (Actual ÷ Target). Tap a Team Leader to
+        expand its PAs. Tap any column header to sort.
       </p>
     </div>
   );
@@ -858,7 +1094,7 @@ export function BiReportView() {
 
       <Panel
         title="% Attainment by PATL"
-        hint="tap a team leader to expand its PAs"
+        hint="monthly · tap a team leader to expand its PAs · sortable"
         className="mt-3"
         exportName="attainment-by-patl"
         exportRows={() =>
@@ -877,23 +1113,7 @@ export function BiReportView() {
           })
         }
       >
-        <div className="space-y-2">
-          {patlTeams.map(([asm, teamPas]) => (
-            <CollapsibleCard
-              key={asm}
-              title={asm}
-              subtitle={`${teamPas.length} PA${teamPas.length === 1 ? "" : "s"}`}
-              right={
-                <AttainBadge pct={combinedAttainment(model, teamPas, targetTableMonths)} />
-              }
-            >
-              <AttainmentHeatmap model={model} pas={teamPas} months={targetTableMonths} />
-            </CollapsibleCard>
-          ))}
-          {patlTeams.length === 0 && (
-            <p className="py-4 text-center text-xs text-slate-400">No teams in scope.</p>
-          )}
-        </div>
+        <AttainmentByPatl model={model} teams={patlTeams} months={targetTableMonths} />
       </Panel>
 
       <Panel
