@@ -468,6 +468,26 @@ export function sumTargetField(
   return s;
 }
 
+/** Sum of a target metric for a single PA over the given months. */
+export function targetFieldForPa(
+  model: DashboardModel,
+  paName: string,
+  field: keyof MonthCell,
+  months: MonthKey[]
+): number {
+  const key = normName(paName);
+  let s = 0;
+  for (const r of model.target.rows) {
+    if (normName(r.paName) !== key) continue;
+    for (const m of months) {
+      const cell = r.months[m];
+      const v = cell ? cell[field] : null;
+      if (v != null) s += v;
+    }
+  }
+  return s;
+}
+
 /** Daily leads for a specific PA + month (row count). */
 export function leadsForPaMonth(
   model: DashboardModel,

@@ -1,7 +1,7 @@
-import { OverviewView } from "./views/OverviewView";
+import { SummaryView } from "./views/SummaryView";
 
 export const dynamic = "force-dynamic";
 
 export default function Page() {
-  return <OverviewView />;
+  return <SummaryView />;
 }
