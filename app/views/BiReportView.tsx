@@ -1273,19 +1273,6 @@ export function BiReportView() {
 
   return (
     <div>
-      {/* DKSH-style header band */}
-      <div className="-mx-4 mb-3 bg-gradient-to-r from-brand-700 to-brand-500 px-4 py-3 text-white">
-        <div className="text-xs font-medium uppercase tracking-widest text-brand-100">
-          Lead Performance
-        </div>
-        <div className="text-lg font-bold leading-tight">
-          Product Ambassador — Lead Performance
-        </div>
-        <div className="text-[11px] text-brand-100">
-          Abbott Nutrition · Similac · Ensure · Glucerna · Pediasure
-        </div>
-      </div>
-
       <DataStatus data={data} />
 
       {(model.target.rows.length === 0 ||

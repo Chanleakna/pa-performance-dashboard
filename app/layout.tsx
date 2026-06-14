@@ -33,9 +33,6 @@ export default function RootLayout({
                 <h1 className="text-sm font-semibold text-slate-900 sm:text-base">
                   PA Performance Dashboard
                 </h1>
-                <p className="text-[11px] text-slate-500">
-                  Abbott Nutrition · Cambodia · live from Google Sheets
-                </p>
               </div>
             </div>
           </div>

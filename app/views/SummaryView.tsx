@@ -81,10 +81,11 @@ export function SummaryView() {
   }, [allMonths]);
 
   useEffect(() => {
-    if (!model || defaulted || !years.length) return;
-    setSlicer((s) => ({ ...s, years: [years[years.length - 1]] }));
+    if (!model || defaulted || !model.dailyMonths.length) return;
+    const latest = model.dailyMonths[model.dailyMonths.length - 1];
+    setSlicer((s) => ({ ...s, years: [latest.slice(0, 4)], months: [latest] }));
     setDefaulted(true);
-  }, [model, defaulted, years]);
+  }, [model, defaulted]);
 
   const pasForAsmsFn = useMemo(() => {
     return (asms: string[]) => {
