@@ -6,6 +6,7 @@ import { type MonthKey, monthLabel, normName } from "../lib/parse";
 import { downloadCsv } from "../lib/csv";
 import { DataStatus, LoadingState } from "../components/DataStatus";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
+import { useAuth } from "../lib/auth";
 
 /** Result color: green ≥90%, amber 75–89%, red below. */
 function pkStyle(pct: number | null): React.CSSProperties {
@@ -25,6 +26,7 @@ const nv = (v: number | null) => (v == null ? -1 : v);
 export function ProductKnowledgeView() {
   const data = useDashboardData();
   const { model } = data;
+  const { patl } = useAuth();
   const [slicer, setSlicer] = useState<SlicerState>({ years: [], months: [], asms: [], pas: [] });
   const [defaulted, setDefaulted] = useState(false);
   const [sortKey, setSortKey] = useState<Sort>("total");
@@ -44,9 +46,13 @@ export function ProductKnowledgeView() {
   useEffect(() => {
     if (!model || defaulted || !years.length) return;
     // Default Year to the latest; leave Month "all" so every month column shows.
-    setSlicer((s) => ({ ...s, years: [years[years.length - 1]] }));
+    setSlicer((s) => ({
+      ...s,
+      years: [years[years.length - 1]],
+      asms: patl ? [patl] : s.asms,
+    }));
     setDefaulted(true);
-  }, [model, defaulted, years]);
+  }, [model, defaulted, years, patl]);
 
   const pasForAsmsFn = useMemo(() => {
     return (asms: string[]) => {
@@ -138,6 +144,7 @@ export function ProductKnowledgeView() {
         months={allMonths}
         asms={model.asms}
         pasForAsms={pasForAsmsFn}
+        lockedAsm={patl ?? undefined}
       />
 
       <div className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-100">

@@ -18,6 +18,7 @@ import { DataStatus, LoadingState } from "../components/DataStatus";
 import { AttainmentPill } from "../components/ui";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import { useDebounced } from "../lib/hooks";
+import { useAuth } from "../lib/auth";
 
 function ExportButton({
   rows,
@@ -114,6 +115,7 @@ type PaSort = "sales" | "leads" | "nu" | "attainment" | "name";
 export function OverviewView() {
   const data = useDashboardData();
   const { model } = data;
+  const { patl } = useAuth();
   const [slicer, setSlicer] = useState<SlicerState>({
     years: [],
     months: [],
@@ -142,9 +144,14 @@ export function OverviewView() {
   useEffect(() => {
     if (!model || defaulted || !model.dailyMonths.length) return;
     const latest = model.dailyMonths[model.dailyMonths.length - 1];
-    setSlicer((s) => ({ ...s, years: [latest.slice(0, 4)], months: [latest] }));
+    setSlicer((s) => ({
+      ...s,
+      years: [latest.slice(0, 4)],
+      months: [latest],
+      asms: patl ? [patl] : s.asms,
+    }));
     setDefaulted(true);
-  }, [model, defaulted]);
+  }, [model, defaulted, patl]);
 
   const monthScope = useMemo<MonthKey[] | null>(() => {
     if (slicer.months.length) return slicer.months;
@@ -397,6 +404,7 @@ export function OverviewView() {
         months={allMonths}
         asms={model.asms}
         pasForAsms={pasForAsmsFn}
+        lockedAsm={patl ?? undefined}
       />
 
       {model.salesTotal === 0 && (

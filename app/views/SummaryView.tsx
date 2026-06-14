@@ -18,6 +18,7 @@ import { DataStatus, LoadingState } from "../components/DataStatus";
 import { CascadingSlicers, type SlicerState } from "../components/Slicers";
 import { GroupedBarChart, LabeledBarChart } from "../components/charts";
 import { AttainmentPill } from "../components/ui";
+import { useAuth } from "../lib/auth";
 
 function Panel({
   title,
@@ -65,6 +66,7 @@ const nv = (v: number | null) => (v == null ? -1 : v);
 export function SummaryView() {
   const data = useDashboardData();
   const { model } = data;
+  const { patl } = useAuth();
   const [slicer, setSlicer] = useState<SlicerState>({ years: [], months: [], asms: [], pas: [] });
   const [defaulted, setDefaulted] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("leadAct");
@@ -83,9 +85,14 @@ export function SummaryView() {
   useEffect(() => {
     if (!model || defaulted || !model.dailyMonths.length) return;
     const latest = model.dailyMonths[model.dailyMonths.length - 1];
-    setSlicer((s) => ({ ...s, years: [latest.slice(0, 4)], months: [latest] }));
+    setSlicer((s) => ({
+      ...s,
+      years: [latest.slice(0, 4)],
+      months: [latest],
+      asms: patl ? [patl] : s.asms,
+    }));
     setDefaulted(true);
-  }, [model, defaulted]);
+  }, [model, defaulted, patl]);
 
   const pasForAsmsFn = useMemo(() => {
     return (asms: string[]) => {
@@ -224,6 +231,7 @@ export function SummaryView() {
         months={allMonths}
         asms={model.asms}
         pasForAsms={pasForAsmsFn}
+        lockedAsm={patl ?? undefined}
       />
 
       <Panel title="Lead vs Target by month" hint="Tar.Lead vs Act.Lead">

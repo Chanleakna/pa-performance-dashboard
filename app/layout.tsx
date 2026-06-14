@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { TabNav } from "./components/TabNav";
+import { AuthGate } from "./lib/auth";
 
 export const metadata: Metadata = {
   title: "PA Performance Dashboard",
@@ -23,22 +24,24 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen font-sans antialiased">
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-          <div className="mx-auto max-w-6xl px-4 py-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
-                PA
-              </div>
-              <div className="leading-tight">
-                <h1 className="text-sm font-semibold text-slate-900 sm:text-base">
-                  PA Performance Dashboard
-                </h1>
+        <AuthGate>
+          <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+            <div className="mx-auto max-w-6xl px-4 py-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-brand-600 text-sm font-bold text-white">
+                  PA
+                </div>
+                <div className="leading-tight">
+                  <h1 className="text-sm font-semibold text-slate-900 sm:text-base">
+                    PA Performance Dashboard
+                  </h1>
+                </div>
               </div>
             </div>
-          </div>
-          <TabNav />
-        </header>
-        <main className="mx-auto max-w-6xl px-4 pb-24 pt-4">{children}</main>
+            <TabNav />
+          </header>
+          <main className="mx-auto max-w-6xl px-4 pb-24 pt-4">{children}</main>
+        </AuthGate>
       </body>
     </html>
   );

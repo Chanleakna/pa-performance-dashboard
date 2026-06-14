@@ -100,6 +100,7 @@ export function CascadingSlicers({
   months,
   asms,
   pasForAsms,
+  lockedAsm,
 }: {
   state: SlicerState;
   onChange: (s: SlicerState) => void;
@@ -108,6 +109,8 @@ export function CascadingSlicers({
   asms: string[];
   /** PA names available for the selected PATLs ([] => every PA). */
   pasForAsms: (asms: string[]) => string[];
+  /** When set, the PATL is fixed (locked to this Team Leader). */
+  lockedAsm?: string;
 }) {
   const monthsForYears = (ys: string[]) =>
     ys.length ? months.filter((m) => ys.some((y) => m.startsWith(y + "-"))) : months;
@@ -139,20 +142,31 @@ export function CascadingSlicers({
           formatOption={monthLabel}
           onChange={(ms) => onChange({ ...state, months: ms })}
         />
-        <MultiSelectSlicer
-          label="PATL"
-          values={state.asms}
-          options={asms}
-          onChange={(a) => {
-            // Prune PAs that no longer belong to the chosen team leaders.
-            const allowedPas = pasForAsms(a);
-            onChange({
-              ...state,
-              asms: a,
-              pas: state.pas.filter((p) => allowedPas.includes(p)),
-            });
-          }}
-        />
+        {lockedAsm ? (
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+              PATL
+            </span>
+            <div className="flex w-full items-center gap-1 truncate rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm text-slate-700">
+              🔒 <span className="truncate">{lockedAsm}</span>
+            </div>
+          </label>
+        ) : (
+          <MultiSelectSlicer
+            label="PATL"
+            values={state.asms}
+            options={asms}
+            onChange={(a) => {
+              // Prune PAs that no longer belong to the chosen team leaders.
+              const allowedPas = pasForAsms(a);
+              onChange({
+                ...state,
+                asms: a,
+                pas: state.pas.filter((p) => allowedPas.includes(p)),
+              });
+            }}
+          />
+        )}
         <MultiSelectSlicer
           label="PA Name"
           values={state.pas}
