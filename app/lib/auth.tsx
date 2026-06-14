@@ -21,6 +21,7 @@ const PASSWORDS: Record<string, string | null> = {
   "1002": "Chin Pholly",
   "1003": "Lon Sreypom",
   "1004": "Mao Soklim",
+  "1005": "Chhay Setha",
 };
 
 interface AuthValue {
