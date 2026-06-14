@@ -530,6 +530,7 @@ export function parseFinalNU(csv: string): NURecord[] {
 export interface TrainingRow {
   month: MonthKey;
   brandTopic: string;
+  name: string; // PA name (now populated)
   totalPoints: number | null;
   pctAchieve: number | null; // 0–100
 }
@@ -559,6 +560,7 @@ export function parseTraining(csv: string): TrainingRow[] {
     out.push({
       month,
       brandTopic,
+      name: pick(row, "Name", "PA Name", "Full Name"),
       totalPoints: num(pick(row, "Total points", "Total Points", "Points")),
       pctAchieve: pct,
     });
