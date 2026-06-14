@@ -24,7 +24,7 @@ import {
   GroupedBarChart,
   HorizontalLabeledBar,
   LabeledBarChart,
-  DailyTrendChart,
+  DailyLeadChart,
 } from "../components/charts";
 
 // ---- small presentational helpers -------------------------------------------
@@ -1203,33 +1203,47 @@ export function BiReportView() {
   }, [model, scopeOnly, slicer.years, allMonths]);
 
   // daily/monthly lead + NU trend
-  const trend = useMemo(() => {
+  // Daily lead trend — bars only, over the business month 26→25 (with weekday
+  // labels and Wednesday shaded as day-off). Falls back to by-month when no
+  // single month is selected.
+  const dailyLeadTrend = useMemo(() => {
     if (!model) return [];
-    const map = new Map<string, { label: string; Leads: number; NU: number; sort: string }>();
-    const keyFor = (d: Date | null, month: string): { key: string; label: string; sort: string } | null => {
-      if (specificMonth) {
-        if (!d) return null;
-        const day = d.getDate();
-        return { key: `${month}-${day}`, label: String(day), sort: String(day).padStart(2, "0") };
+    const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    if (specificMonth) {
+      const [y, mo] = specificMonth.split("-").map(Number);
+      const start = new Date(y, mo - 2, 26);
+      const end = new Date(y, mo - 1, 25, 23, 59, 59);
+      const byDate = new Map<string, number>();
+      for (const d of filteredDaily(model, scopeOnly)) {
+        if (!d.createdAt || d.createdAt < start || d.createdAt > end) continue;
+        const k = `${d.createdAt.getFullYear()}-${d.createdAt.getMonth() + 1}-${d.createdAt.getDate()}`;
+        byDate.set(k, (byDate.get(k) || 0) + 1);
       }
-      return { key: month, label: monthLabel(month).replace(" 20", " '"), sort: month };
-    };
-    for (const d of scopedDaily) {
-      const k = keyFor(d.createdAt, d.month);
-      if (!k) continue;
-      const e = map.get(k.key) || { label: k.label, Leads: 0, NU: 0, sort: k.sort };
-      e.Leads++;
-      map.set(k.key, e);
+      const out: { label: string; leads: number; isOff: boolean }[] = [];
+      const cur = new Date(start);
+      while (cur <= end) {
+        const k = `${cur.getFullYear()}-${cur.getMonth() + 1}-${cur.getDate()}`;
+        out.push({
+          label: `${cur.getDate()} ${WD[cur.getDay()]}`,
+          leads: byDate.get(k) || 0,
+          isOff: cur.getDay() === 3, // Wednesday = day off
+        });
+        cur.setDate(cur.getDate() + 1);
+      }
+      return out;
     }
-    for (const r of scopedNU) {
-      const k = keyFor(r.date, r.month);
-      if (!k) continue;
-      const e = map.get(k.key) || { label: k.label, Leads: 0, NU: 0, sort: k.sort };
-      e.NU++;
-      map.set(k.key, e);
-    }
-    return Array.from(map.values()).sort((a, b) => a.sort.localeCompare(b.sort));
-  }, [model, scopedDaily, scopedNU, specificMonth]);
+    // By month (no single month selected).
+    const byMonth = new Map<string, number>();
+    for (const d of scopedDaily) if (d.month) byMonth.set(d.month, (byMonth.get(d.month) || 0) + 1);
+    const months = slicer.years.length
+      ? allMonths.filter((m) => slicer.years.some((yy) => m.startsWith(yy + "-")))
+      : allMonths;
+    return months.map((m) => ({
+      label: monthLabel(m).replace(" 20", " '"),
+      leads: byMonth.get(m) || 0,
+      isOff: false,
+    }));
+  }, [model, specificMonth, scopeOnly, scopedDaily, slicer.years, allMonths]);
 
   const byProduct = useMemo(() => {
     const m = new Map<string, number>();
@@ -1343,21 +1357,18 @@ export function BiReportView() {
         </Panel>
 
         <Panel
-          title="Lead & NU Trend"
-          hint={specificMonth ? "by day" : "by month"}
-          exportName="lead-nu-trend"
+          title="Daily Lead Trend"
+          hint={specificMonth ? "business month 26→25 · Wed = day off" : "by month"}
+          exportName="daily-lead-trend"
           exportRows={() =>
-            trend.map((r) => ({ Period: r.label, Leads: r.Leads, "New Users": r.NU }))
+            dailyLeadTrend.map((r) => ({
+              Day: r.label,
+              Leads: r.leads,
+              "Day off": r.isOff ? "Wed" : "",
+            }))
           }
         >
-          <DailyTrendChart
-            data={trend}
-            xKey="label"
-            barKey="Leads"
-            lineKey="NU"
-            barName="Leads"
-            lineName="New Users"
-          />
+          <DailyLeadChart data={dailyLeadTrend} />
         </Panel>
       </div>
 
