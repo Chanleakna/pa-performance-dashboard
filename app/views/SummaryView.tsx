@@ -98,12 +98,18 @@ export function SummaryView() {
     () => ({ asms: slicer.asms, pas: slicer.pas }),
     [slicer.asms, slicer.pas]
   );
+  // Charts show every month of the selected year (trend); the table respects
+  // the Month slicer too.
   const months = useMemo(
     () =>
       slicer.years.length
         ? allMonths.filter((m) => slicer.years.some((y) => m.startsWith(y + "-")))
         : allMonths,
     [allMonths, slicer.years]
+  );
+  const tableMonths = useMemo(
+    () => (slicer.months.length ? slicer.months : months),
+    [slicer.months, months]
   );
 
   const leadVsTarget = useMemo(() => {
@@ -148,10 +154,10 @@ export function SummaryView() {
       if (slicer.asms.length) return slicer.asms.includes(p.asm);
       return true;
     });
-    // training avg per name over months
+    // training avg per name over the table months
     const train = new Map<string, { sum: number; n: number }>();
     for (const t of model.training) {
-      if (!t.name || t.pctAchieve == null || !months.includes(t.month)) continue;
+      if (!t.name || t.pctAchieve == null || !tableMonths.includes(t.month)) continue;
       const k = normName(t.name);
       const c = train.get(k) || { sum: 0, n: 0 };
       c.sum += t.pctAchieve;
@@ -159,11 +165,11 @@ export function SummaryView() {
       train.set(k, c);
     }
     return scopePas.map((p) => {
-      const leadAct = months.reduce((s, m) => s + actLeadForPaMonth(model, p.name, m), 0);
-      const leadTar = months.reduce((s, m) => s + targetLeadForPaMonth(model, p.name, m), 0);
-      const nuAct = targetFieldForPa(model, p.name, "actNU", months);
-      const nuTar = targetFieldForPa(model, p.name, "tarNU", months);
-      const recruited = (model.nuByPa[p.name] || []).filter((r) => months.includes(r.month)).length;
+      const leadAct = tableMonths.reduce((s, m) => s + actLeadForPaMonth(model, p.name, m), 0);
+      const leadTar = tableMonths.reduce((s, m) => s + targetLeadForPaMonth(model, p.name, m), 0);
+      const nuAct = targetFieldForPa(model, p.name, "actNU", tableMonths);
+      const nuTar = targetFieldForPa(model, p.name, "tarNU", tableMonths);
+      const recruited = (model.nuByPa[p.name] || []).filter((r) => tableMonths.includes(r.month)).length;
       const tk = train.get(normName(p.name));
       return {
         name: p.name,
@@ -178,7 +184,7 @@ export function SummaryView() {
         knowledge: tk && tk.n ? tk.sum / tk.n : null,
       };
     });
-  }, [model, months, slicer.pas, slicer.asms]);
+  }, [model, tableMonths, slicer.pas, slicer.asms]);
 
   const sorted = useMemo(() => {
     const dir = asc ? 1 : -1;
@@ -200,7 +206,7 @@ export function SummaryView() {
   const Th = ({ k, label }: { k: SortKey; label: string }) => (
     <th
       onClick={() => setSort(k)}
-      className="cursor-pointer select-none whitespace-nowrap px-2 py-2 text-right font-medium text-slate-500 hover:text-brand-700"
+      className="sticky top-0 z-20 cursor-pointer select-none whitespace-nowrap bg-white px-2 py-2 text-right font-medium text-slate-500 hover:text-brand-700"
     >
       {label}
       {sortKey === k && <span className="ml-0.5 text-brand-600">{asc ? "▲" : "▼"}</span>}
@@ -278,22 +284,22 @@ export function SummaryView() {
             ⬇ CSV
           </button>
         </div>
-        <div className="overflow-x-auto">
+        <div className="no-scrollbar max-h-[70vh] overflow-auto">
           <table className="w-full text-xs">
-            <thead className="border-b border-slate-100">
+            <thead>
               <tr>
-                <th className="px-2 py-2 text-left font-medium text-slate-500">#</th>
+                <th className="sticky top-0 z-20 bg-white px-2 py-2 text-left font-medium text-slate-500">#</th>
                 <th
                   onClick={() => setSort("name")}
-                  className="cursor-pointer select-none px-2 py-2 text-left font-medium text-slate-500 hover:text-brand-700"
+                  className="sticky top-0 z-20 cursor-pointer select-none bg-white px-2 py-2 text-left font-medium text-slate-500 hover:text-brand-700"
                 >
                   PA{sortKey === "name" && <span className="ml-0.5 text-brand-600">{asc ? "▲" : "▼"}</span>}
                 </th>
                 <Th k="leadAct" label="Lead Act" />
-                <th className="px-2 py-2 text-right font-medium text-slate-500">Lead Tar</th>
+                <th className="sticky top-0 z-20 bg-white px-2 py-2 text-right font-medium text-slate-500">Lead Tar</th>
                 <Th k="leadPct" label="Lead %" />
                 <Th k="nuAct" label="NU Act" />
-                <th className="px-2 py-2 text-right font-medium text-slate-500">NU Tar</th>
+                <th className="sticky top-0 z-20 bg-white px-2 py-2 text-right font-medium text-slate-500">NU Tar</th>
                 <Th k="nuPct" label="NU %" />
                 <Th k="strike" label="Strike %" />
                 <Th k="knowledge" label="Know %" />
